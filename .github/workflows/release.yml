@@ -148,6 +148,26 @@ jobs:
           set -euo pipefail
           cd dist
           shasum -a 256 *.tar.gz | tee SHA256SUMS
+      - name: Compose release notes
+        run: |
+          set -euo pipefail
+          notes="dist/RELEASE_NOTES.md"
+          {
+            if [[ -f CHANGELOG.md ]]; then
+              # Top-most `## [...]` section (matches a `## [VERSION]` block if
+              # the user promoted Unreleased, otherwise falls back to whatever
+              # is at the top of the file).
+              awk '/^## \[/ { count++; if (count == 2) exit; next } count == 1' CHANGELOG.md
+              echo
+            fi
+            echo "## SHA256SUMS"
+            echo
+            echo '```'
+            cat dist/SHA256SUMS
+            echo '```'
+          } > "$notes"
+          echo "--- composed release notes ---"
+          cat "$notes"
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -157,7 +177,7 @@ jobs:
           v="${VERSION#v}"
           gh release create "${VERSION}" dist/*.tar.gz dist/SHA256SUMS \
             --title "vbox ${v}" \
-            --notes-file dist/SHA256SUMS
+            --notes-file dist/RELEASE_NOTES.md
       - name: Bump Casks/vbox.rb on main
         env:
           VERSION: ${{ github.ref_name }}
