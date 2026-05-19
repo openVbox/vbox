@@ -17,6 +17,10 @@ use crate::{
     PrepareAppArgs, SamplesArg, SecondsArg, SuffixArgs, TextArgs, TrailingArgs, VolumeArgs,
 };
 
+const INSTANCE_PORT_ALLOC_FILE: &str = "instance-ports.tsv";
+const INSTANCE_PORT_OFFSET: u32 = 2;
+const INSTANCE_PORT_SPAN: u32 = 2048;
+
 pub(crate) fn build(ctx: &AppContext) -> Result<()> {
     eprintln!("[vbox] build host CLI + client");
     let mut cmd = process::command("cargo");
@@ -97,7 +101,7 @@ pub(crate) fn launch_id(ctx: &AppContext, app_id: String) -> Result<()> {
 
 pub(crate) fn prepare_app(ctx: &AppContext, args: PrepareAppArgs) -> Result<()> {
     let record = find_app_record(ctx, &args.app_id)?;
-    let app_ctx = instance_context(ctx, &sanitize_id(&record.id));
+    let app_ctx = instance_context(ctx, &sanitize_id(&record.id))?;
     start_stack(&app_ctx)?;
     if args.bundle {
         println!(
@@ -1256,7 +1260,7 @@ fn decode_argv_b64(_value: &str) -> Option<Vec<OsString>> {
     Some(argv.into_iter().map(OsString::from).collect())
 }
 
-fn instance_context(ctx: &AppContext, instance: &str) -> AppContext {
+fn instance_context(ctx: &AppContext, instance: &str) -> Result<AppContext> {
     let mut out = ctx.clone();
     out.instance = instance.to_string();
     out.socket = if instance == "default" {
@@ -1264,7 +1268,111 @@ fn instance_context(ctx: &AppContext, instance: &str) -> AppContext {
     } else {
         format!("vbox-{}", sanitize_id(instance))
     };
-    out
+    out.port = instance_port(ctx, instance)?;
+    Ok(out)
+}
+
+fn instance_port(ctx: &AppContext, instance: &str) -> Result<u16> {
+    if instance == "default" {
+        return Ok(ctx.port);
+    }
+
+    let path = ctx.state_dir.join(INSTANCE_PORT_ALLOC_FILE);
+    let mut entries = read_instance_ports(&path)?;
+    if let Some((_, port)) = entries.iter().find(|(name, _)| name == instance) {
+        return Ok(*port);
+    }
+
+    let reserved = reserved_ports(ctx);
+    let start = (u32::from(ctx.port) + INSTANCE_PORT_OFFSET).max(1024);
+    let end = (start + INSTANCE_PORT_SPAN - 1).min(u32::from(u16::MAX));
+    if start > u32::from(u16::MAX) {
+        bail!(
+            "no free instance port available after base port {}",
+            ctx.port
+        );
+    }
+    for raw in start..=end {
+        let candidate = raw as u16;
+        if reserved.contains(&candidate) {
+            continue;
+        }
+        if entries.iter().any(|(_, port)| *port == candidate) {
+            continue;
+        }
+        entries.push((instance.to_string(), candidate));
+        write_instance_ports(&path, &entries)?;
+        return Ok(candidate);
+    }
+
+    bail!("no free instance port in {}-{} for {instance}", start, end)
+}
+
+fn reserved_ports(ctx: &AppContext) -> Vec<u16> {
+    let mut ports = vec![ctx.port];
+    let control = brand::env_var("VBOX_CONTROL_PORT")
+        .and_then(|value| value.parse::<u16>().ok())
+        .unwrap_or(5711);
+    if !ports.contains(&control) {
+        ports.push(control);
+    }
+    ports
+}
+
+fn read_instance_ports(path: &Path) -> Result<Vec<(String, u16)>> {
+    let text = match fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(err) => return Err(err).with_context(|| format!("read {}", path.display())),
+    };
+    let mut entries = Vec::new();
+    for (idx, line) in text.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let mut fields = line.split_whitespace();
+        let Some(instance) = fields.next() else {
+            continue;
+        };
+        let Some(port) = fields.next() else {
+            bail!(
+                "malformed {} line {}: missing port",
+                path.display(),
+                idx + 1
+            );
+        };
+        if fields.next().is_some() {
+            bail!(
+                "malformed {} line {}: expected instance and port",
+                path.display(),
+                idx + 1
+            );
+        }
+        entries.push((
+            instance.to_string(),
+            port.parse()
+                .with_context(|| format!("parse {} line {} port", path.display(), idx + 1))?,
+        ));
+    }
+    Ok(entries)
+}
+
+fn write_instance_ports(path: &Path, entries: &[(String, u16)]) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let mut out = String::new();
+    for (instance, port) in entries {
+        out.push_str(instance);
+        out.push('\t');
+        out.push_str(&port.to_string());
+        out.push('\n');
+    }
+    let tmp = path.with_extension("tmp");
+    fs::write(&tmp, out).with_context(|| format!("write {}", tmp.display()))?;
+    fs::rename(&tmp, path).with_context(|| format!("rename {}", path.display()))?;
+    Ok(())
 }
 
 fn sanitize_id(value: &str) -> String {
@@ -1363,6 +1471,7 @@ fn build_launcher_app(ctx: &AppContext, row: &AppRecord) -> Result<PathBuf> {
     let _ = fs::remove_file(resources.join("Socket.txt"));
     let has_icon = copy_launcher_icon(ctx, row, &resources)?;
     let safe_id = sanitize_id(&row.id);
+    let app_ctx = instance_context(ctx, &safe_id)?;
     let executable = format!("vbox-client-{safe_id}");
     let bundle_id = format!("local.vbox.native.app.{safe_id}");
     let icon_plist = if has_icon {
@@ -1433,7 +1542,7 @@ fn build_launcher_app(ctx: &AppContext, row: &AppRecord) -> Result<PathBuf> {
                 .unwrap_or_default()
         ),
     )?;
-    fs::write(resources.join("Port.txt"), format!("{}\n", ctx.port))?;
+    fs::write(resources.join("Port.txt"), format!("{}\n", app_ctx.port))?;
     fs::write(resources.join("Width.txt"), format!("{}\n", ctx.width))?;
     fs::write(resources.join("Height.txt"), format!("{}\n", ctx.height))?;
     fs::write(
@@ -1625,10 +1734,31 @@ mod tests {
     fn instance_context_resets_socket_for_default_and_sanitizes_named_instances() {
         let dir = tempdir_for_test();
         let ctx = ctx(&dir);
-        assert_eq!(instance_context(&ctx, "default").socket, "vbox-0");
-        let named = instance_context(&ctx, "dev box!!west");
+        let default = instance_context(&ctx, "default").unwrap();
+        assert_eq!(default.socket, "vbox-0");
+        assert_eq!(default.port, 5710);
+        let named = instance_context(&ctx, "dev box!!west").unwrap();
         assert_eq!(named.instance, "dev box!!west");
         assert_eq!(named.socket, "vbox-dev-box--west");
+        assert_eq!(named.port, 5712);
+    }
+
+    #[test]
+    fn instance_context_reuses_stable_distinct_ports_for_named_instances() {
+        let dir = tempdir_for_test();
+        let ctx = ctx(&dir);
+
+        let calc = instance_context(&ctx, "org-gnome-Calculator").unwrap();
+        let maps = instance_context(&ctx, "org-gnome-Maps").unwrap();
+        let calc_again = instance_context(&ctx, "org-gnome-Calculator").unwrap();
+
+        assert_eq!(calc.port, 5712);
+        assert_eq!(maps.port, 5713);
+        assert_eq!(calc_again.port, calc.port);
+        assert_eq!(
+            fs::read_to_string(ctx.state_dir.join(INSTANCE_PORT_ALLOC_FILE)).unwrap(),
+            "org-gnome-Calculator\t5712\norg-gnome-Maps\t5713\n"
+        );
     }
 
     #[test]
@@ -1690,6 +1820,10 @@ mod tests {
         assert_eq!(
             fs::read_to_string(app.join("Contents/Resources/Instance.txt")).unwrap(),
             "org-example-App\n"
+        );
+        assert_eq!(
+            fs::read_to_string(app.join("Contents/Resources/Port.txt")).unwrap(),
+            "5712\n"
         );
         remove_launcher_app(&row).unwrap();
         assert!(!app.exists());
