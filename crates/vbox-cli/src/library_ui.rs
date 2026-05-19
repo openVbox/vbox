@@ -113,7 +113,7 @@ pub(crate) fn build_main_library_app(
   <key>CFBundleDisplayName</key><string>vbox</string>
   <key>CFBundleIconFile</key><string>{}</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>0.1.0</string>
+  <key>CFBundleShortVersionString</key><string>0.1.1</string>
   <key>CFBundleVersion</key><string>1</string>
   <key>LSMinimumSystemVersion</key><string>13.0</string>
   <key>NSHighResolutionCapable</key><true/>

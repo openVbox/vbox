@@ -3,16 +3,16 @@
 All notable changes to vbox.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). The project is
-pre-1.0; released changes are grouped by version, and upcoming work lives under
-`[Unreleased]`.
+pre-1.0; released changes are grouped by release tag, and upcoming work lives
+under `[Unreleased]`.
 
-## [0.1.1] - 2026-05-20
+## [v0.1.1] - 2026-05-20
 
 ### Changed
 
 - GitHub Release publishing now composes release notes from the matching
-  changelog version section plus `SHA256SUMS`, instead of publishing
-  checksums as the entire release body.
+  changelog release tag section plus `SHA256SUMS`, instead of
+  publishing checksums as the entire release body.
 
 ### Fixed
 

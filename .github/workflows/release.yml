@@ -153,13 +153,12 @@ jobs:
           VERSION: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          version="${VERSION#v}"
           notes="dist/RELEASE_NOTES.md"
           changelog_notes="$(mktemp)"
           trap 'rm -f "$changelog_notes"' EXIT
           if [[ -f CHANGELOG.md ]]; then
-            awk -v version="$version" '
-              BEGIN { target = "## [" version "]" }
+            awk -v tag="$VERSION" '
+              BEGIN { target = "## [" tag "]" }
               /^## \[/ {
                 if (found) exit
                 if (index($0, target) == 1) {
@@ -192,9 +191,8 @@ jobs:
           VERSION:  ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          v="${VERSION#v}"
           gh release create "${VERSION}" dist/*.tar.gz dist/SHA256SUMS \
-            --title "vbox ${v}" \
+            --title "vbox ${VERSION}" \
             --notes-file dist/RELEASE_NOTES.md
       - name: Bump Casks/vbox.rb on main
         env:

@@ -2,7 +2,7 @@
 
 SwiftUI shell for the vbox macOS library app.
 
-Version: `0.1.0`
+Version: `0.1.1`
 
 The Rust CLI still builds the shipped app bundle, but the Swift source now
 lives here instead of inside `crates/vbox-cli/src`.

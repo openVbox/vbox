@@ -472,8 +472,8 @@ mod tests {
     fn format_server_name_embeds_fallback_os() {
         // When /etc/os-release is missing the caller passes "linux" — the
         // string still has to parse as `vbox-server/<ver> (<os>...)`.
-        let s = format_server_name("0.1.0", "linux");
-        assert!(s.contains("vbox-server/0.1.0"));
+        let s = format_server_name("0.1.1", "linux");
+        assert!(s.contains("vbox-server/0.1.1"));
         assert!(s.contains("(linux, Wayland-first)"));
     }
 
@@ -648,8 +648,8 @@ mod tests {
 
     #[test]
     fn session_accept_line_has_session_id_client_name_and_proto() {
-        let line = format_session_accept_line(7, "vbox-client/0.1.0", 12);
-        assert_eq!(line, "session 7: client='vbox-client/0.1.0' (proto v12)");
+        let line = format_session_accept_line(7, "vbox-client/0.1.1", 12);
+        assert_eq!(line, "session 7: client='vbox-client/0.1.1' (proto v12)");
     }
 
     #[test]

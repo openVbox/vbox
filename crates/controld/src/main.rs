@@ -1036,14 +1036,14 @@ mod tests {
     #[test]
     fn protocol_check_accepts_matching_version() {
         assert_eq!(
-            check_protocol_version("vbox-client/0.1.0", PROTOCOL_VERSION),
+            check_protocol_version("vbox-client/0.1.1", PROTOCOL_VERSION),
             HelloDecision::Accept
         );
     }
 
     #[test]
     fn protocol_check_rejects_mismatched_version_with_426() {
-        match check_protocol_version("vbox-client/0.1.0", PROTOCOL_VERSION.wrapping_sub(1)) {
+        match check_protocol_version("vbox-client/0.1.1", PROTOCOL_VERSION.wrapping_sub(1)) {
             HelloDecision::Reject(err) => {
                 assert_eq!(err.code, 426);
                 assert!(err.message.contains("protocol version mismatch"));

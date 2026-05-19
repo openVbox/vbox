@@ -1492,7 +1492,7 @@ fn build_launcher_app(ctx: &AppContext, row: &AppRecord) -> Result<PathBuf> {
   <key>CFBundleDisplayName</key><string>{}</string>
 {}  <key>LSUIElement</key><false/>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>0.1.0</string>
+  <key>CFBundleShortVersionString</key><string>0.1.1</string>
   <key>CFBundleVersion</key><string>1</string>
   <key>LSMinimumSystemVersion</key><string>11.0</string>
   <key>NSHighResolutionCapable</key><true/>

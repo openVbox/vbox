@@ -10,13 +10,13 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Hello {
     pub protocol_version: u16,
-    pub client_name: String, // free-form, e.g. "vbox-client/0.1.0 (macOS 26)"
+    pub client_name: String, // free-form, e.g. "vbox-client/0.1.1 (macOS 26)"
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Welcome {
     pub protocol_version: u16,
-    pub server_name: String, // e.g. "vbox-server/0.1.0 (Fedora 42, Wayland-first)"
+    pub server_name: String, // e.g. "vbox-server/0.1.1 (Fedora 42, Wayland-first)"
     pub session_id: u64,     // server-issued, useful for logs
 }
 
