@@ -3,8 +3,24 @@
 All notable changes to vbox.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). The project is
-pre-1.0 and does not ship semver releases yet — every change currently lives
-under `[Unreleased]`, grouped by area.
+pre-1.0; released changes are grouped by version, and upcoming work lives under
+`[Unreleased]`.
+
+## [0.1.1] - 2026-05-20
+
+### Changed
+
+- GitHub Release publishing now composes release notes from the matching
+  changelog version section plus `SHA256SUMS`, instead of publishing
+  checksums as the entire release body.
+
+### Fixed
+
+- Installed macOS per-app launchers no longer all reuse the base `5710`
+  data port. Named app instances now get stable per-instance ports
+  recorded under `.vbox/instance-ports.tsv`, and generated `.app`
+  bundles write the allocated port into `Port.txt`, preventing one
+  running launcher from blocking another with a controld port conflict.
 
 ## [Unreleased]
 

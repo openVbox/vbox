@@ -149,15 +149,33 @@ jobs:
           cd dist
           shasum -a 256 *.tar.gz | tee SHA256SUMS
       - name: Compose release notes
+        env:
+          VERSION: ${{ github.ref_name }}
         run: |
           set -euo pipefail
+          version="${VERSION#v}"
           notes="dist/RELEASE_NOTES.md"
+          changelog_notes="$(mktemp)"
+          trap 'rm -f "$changelog_notes"' EXIT
+          if [[ -f CHANGELOG.md ]]; then
+            awk -v version="$version" '
+              BEGIN { target = "## [" version "]" }
+              /^## \[/ {
+                if (found) exit
+                if (index($0, target) == 1) {
+                  found = 1
+                  next
+                }
+              }
+              found { print }
+            ' CHANGELOG.md > "$changelog_notes"
+            if [[ ! -s "$changelog_notes" ]]; then
+              awk '/^## \[/ { count++; if (count == 2) exit; next } count == 1' CHANGELOG.md > "$changelog_notes"
+            fi
+          fi
           {
-            if [[ -f CHANGELOG.md ]]; then
-              # Top-most `## [...]` section (matches a `## [VERSION]` block if
-              # the user promoted Unreleased, otherwise falls back to whatever
-              # is at the top of the file).
-              awk '/^## \[/ { count++; if (count == 2) exit; next } count == 1' CHANGELOG.md
+            if [[ -s "$changelog_notes" ]]; then
+              cat "$changelog_notes"
               echo
             fi
             echo "## SHA256SUMS"
