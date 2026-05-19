@@ -6,6 +6,8 @@ macOS 호스트에서 Linux 게스트 GUI 앱을 rootless 멀티윈도우로 띄
 자체 프로토콜 + Wayland nested compositor 구현. XPRA 의존성 없이 어떤 언어의
 키보드 입력이든 직접 처리하는 것이 목표.
 
+![Linux GNOME 앱이 vbox로 macOS 네이티브 창에 rootless 표시](./images/hero.png)
+
 ## 왜 vbox?
 
 - XPRA의 macOS 클라이언트는 호스트 IME 합성을 게스트로 전달하지 않아

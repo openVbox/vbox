@@ -7,6 +7,8 @@ aplicaciones GUI de invitados Linux en multi-ventana rootless desde un host
 macOS. El objetivo es soportar la entrada de teclado en cualquier idioma sin
 depender de XPRA.
 
+![Apps GNOME de Linux como ventanas nativas macOS rootless vía vbox](./images/hero.png)
+
 ## ¿Por qué vbox?
 
 - El cliente macOS de XPRA no reenvía la composición IME del host al

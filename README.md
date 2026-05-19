@@ -6,6 +6,8 @@ A self-contained protocol + Wayland nested compositor for running Linux
 guest GUI apps as rootless multi-window on a macOS host. The goal is
 full keyboard input support for any language, without any XPRA dependency.
 
+![GNOME apps running as rootless macOS windows via vbox](./images/hero.png)
+
 ## Why vbox?
 
 - XPRA's macOS client never forwards host IME composition to the guest,

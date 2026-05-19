@@ -6,6 +6,8 @@
 + Wayland nested compositor 实现。目标是无需 XPRA 依赖，原生支持任何语言的
 键盘输入。
 
+![Linux GNOME 应用通过 vbox 以 rootless 多窗口在 macOS 上显示](./images/hero.png)
+
 ## 为什么是 vbox?
 
 - XPRA 的 macOS 客户端不会把主机的 IME 合成转发给客户机，导致非拉丁
