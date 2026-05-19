@@ -1,0 +1,39 @@
+[package]
+name = "vbox-client"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "vbox client: runs on macOS host"
+
+[[bin]]
+name = "vbox-client"
+path = "src/main.rs"
+
+[dependencies]
+vbox-proto.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+winit.workspace = true
+softbuffer.workspace = true
+png = "0.17"
+rustls.workspace = true
+rustls-pemfile.workspace = true
+rcgen.workspace = true
+quinn.workspace = true
+tokio.workspace = true
+bytes.workspace = true
+sha2.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+# Direct libc usage is limited to `viewer::dump_signal` for SIGUSR1 →
+# winit-event bridging. Cheaper than pulling in signal-hook just for
+# one atomic flip.
+libc = "0.2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.5"
+objc2-app-kit = { version = "0.2", features = ["NSApplication", "NSImage", "NSPasteboard"] }
+objc2-foundation = { version = "0.2", features = ["NSData", "NSString", "NSArray"] }

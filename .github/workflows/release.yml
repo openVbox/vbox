@@ -1,0 +1,180 @@
+name: release
+
+# Push a v* tag to trigger a multi-platform release. Asset names are
+# version-less so the README can link to /releases/latest/download/<name>
+# and never need a manual bump per release:
+#   - macOS universal vbox CLI (ad-hoc signed)        -> dist/vbox-universal.tar.gz
+#   - Linux x86_64 vbox-server + vbox-controld        -> dist/vbox-x86_64-linux-gnu.tar.gz
+#   - Linux aarch64 vbox-server + vbox-controld       -> dist/vbox-aarch64-linux-gnu.tar.gz
+# Then publish a GitHub Release with every tarball and a SHA256SUMS file,
+# and bump Casks/vbox.rb on main with the new macOS version+sha256.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      sha256:  ${{ steps.pack.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Resolve version
+        id: ver
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          cargo_version="$(grep -E '^version' Cargo.toml | head -1 | sed -E 's/.*"([^"]+)".*/\1/')"
+          if [[ "$version" != "$cargo_version" ]]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match Cargo.toml version $cargo_version"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Set up Rust + targets
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup target add x86_64-apple-darwin aarch64-apple-darwin
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+      - name: Build x86_64-apple-darwin
+        run: cargo build --release --target x86_64-apple-darwin -p vbox-cli
+      - name: Build aarch64-apple-darwin
+        run: cargo build --release --target aarch64-apple-darwin -p vbox-cli
+      - name: lipo + ad-hoc codesign + tarball
+        id: pack
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist/stage/bin
+          lipo -create -output dist/stage/bin/vbox \
+            target/x86_64-apple-darwin/release/vbox \
+            target/aarch64-apple-darwin/release/vbox
+          codesign --force --sign - --timestamp=none dist/stage/bin/vbox
+          dist/stage/bin/vbox --version
+          tarball="dist/vbox-universal.tar.gz"
+          tar -C dist/stage -czf "$tarball" bin
+          sha="$(shasum -a 256 "$tarball" | awk '{print $1}')"
+          echo "sha256=$sha" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vbox-macos-universal
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  build-linux:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runs_on: ubuntu-latest
+            target:  x86_64-unknown-linux-gnu
+            asset:   x86_64-linux-gnu
+          - runs_on: ubuntu-24.04-arm
+            target:  aarch64-unknown-linux-gnu
+            asset:   aarch64-linux-gnu
+    runs-on: ${{ matrix.runs_on }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Resolve version
+        id: ver
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config libxkbcommon-dev
+      - name: Set up Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup target add ${{ matrix.target }}
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ matrix.target }}-${{ hashFiles('Cargo.lock') }}
+      - name: Build vbox-server + vbox-controld
+        run: |
+          cargo build --release --target ${{ matrix.target }} \
+            -p vbox-server -p vbox-controld
+      - name: Package tarball
+        id: pack
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+          TARGET:  ${{ matrix.target }}
+          ASSET:   ${{ matrix.asset }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist/stage/bin
+          cp target/${TARGET}/release/vbox-server   dist/stage/bin/
+          cp target/${TARGET}/release/vbox-controld dist/stage/bin/
+          strip dist/stage/bin/* || true
+          tarball="dist/vbox-${ASSET}.tar.gz"
+          tar -C dist/stage -czf "$tarball" bin
+          shasum -a 256 "$tarball"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vbox-${{ matrix.asset }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  release:
+    needs: [build-macos, build-linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: SHA256SUMS
+        run: |
+          set -euo pipefail
+          cd dist
+          shasum -a 256 *.tar.gz | tee SHA256SUMS
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION:  ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          v="${VERSION#v}"
+          gh release create "${VERSION}" dist/*.tar.gz dist/SHA256SUMS \
+            --title "vbox ${v}" \
+            --notes-file dist/SHA256SUMS
+      - name: Bump Casks/vbox.rb on main
+        env:
+          VERSION: ${{ github.ref_name }}
+          SHA:     ${{ needs.build-macos.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          v="${VERSION#v}"
+          git fetch origin main:main
+          git checkout main
+          sed -i -E "s/^( *version )\".*\"/\1\"${v}\"/" Casks/vbox.rb
+          sed -i -E "s/^( *sha256 )\".*\"/\1\"${SHA}\"/" Casks/vbox.rb
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Casks/vbox.rb
+          if git diff --cached --quiet; then
+            echo "cask already up to date"
+            exit 0
+          fi
+          git commit -m "cask: vbox ${v} (${SHA:0:12})"
+          git push origin main

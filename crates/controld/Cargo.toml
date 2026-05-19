@@ -1,0 +1,25 @@
+[package]
+name = "vbox-controld"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "vbox control daemon — instance lifecycle over RPC"
+
+[[bin]]
+name = "vbox-controld"
+path = "src/main.rs"
+
+[dependencies]
+vbox-proto.workspace = true
+serde.workspace = true
+postcard.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+libc = "0.2"
+rustls.workspace = true
+rustls-pemfile.workspace = true
+rcgen.workspace = true
+sha2.workspace = true
+
+[dev-dependencies]

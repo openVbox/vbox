@@ -1,0 +1,27 @@
+[package]
+name = "vbox-server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "vbox daemon: runs in the Linux guest"
+
+[[bin]]
+name = "vbox-server"
+path = "src/main.rs"
+
+[dependencies]
+vbox-proto.workspace = true
+serde.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+quinn.workspace = true
+tokio.workspace = true
+bytes.workspace = true
+rustls.workspace = true
+rcgen.workspace = true
+rustls-pemfile.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+smithay = { version = "0.7.0", default-features = false, features = ["wayland_frontend"] }
+libc = "0.2"

@@ -1,0 +1,36 @@
+[workspace]
+members = ["crates/proto", "crates/server", "crates/client", "crates/controld", "crates/vbox-cli"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+license = "MIT"
+
+[workspace.dependencies]
+vbox-proto = { path = "crates/proto" }
+
+serde    = { version = "1", features = ["derive"] }
+postcard = { version = "1", features = ["use-std"] }
+anyhow   = "1"
+serde_json = "1"
+clap     = { version = "4", features = ["derive"] }
+winit    = "0.30.12"
+softbuffer = "0.4.8"
+# mTLS opt-in (controld + ctl). aws-lc-rs avoids the ring build pain on aarch64
+# guests; ring is still pulled in by webpki-roots upstream chains, but we keep
+# our direct dep on aws-lc-rs.
+rustls   = { version = "0.23", default-features = false, features = ["std", "tls12", "aws-lc-rs"] }
+rustls-pemfile = "2"
+rcgen    = { version = "0.13", default-features = false, features = ["aws_lc_rs", "pem", "x509-parser"] }
+quinn    = { version = "0.11.9", default-features = false, features = ["runtime-tokio", "rustls-aws-lc-rs", "log"] }
+tokio    = { version = "1", features = ["rt", "rt-multi-thread", "net", "time", "io-util", "sync"] }
+bytes    = "1"
+sha2     = "0.10"
+
+[profile.release]
+strip = true
+lto = "thin"
+opt-level = "z"
+codegen-units = 1

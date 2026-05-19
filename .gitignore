@@ -1,0 +1,9 @@
+/target/
+/dist/
+/.vbox/
+/logs/
+/.icebox/
+/vbox-swift/.build/
+/.codex/
+/.claude/
+.DS_Store
