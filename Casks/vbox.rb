@@ -10,6 +10,7 @@ cask "vbox" do
   depends_on macos: :ventura
 
   binary "bin/vbox"
+  app "vbox.app"
 
   zap trash: [
     "~/.vbox",
@@ -17,13 +18,13 @@ cask "vbox" do
   ]
 
   caveats <<~EOS
-    vbox builds your macOS .app launchers from your guest config at runtime,
-    because each .app embeds your guest host, port and CLI path. After install:
+    vbox is now in Launchpad. Per-Linux-app launchers are still generated on
+    your machine because each .app embeds your guest host, port and CLI path:
 
       # (one-time) make sure Xcode command line tools are installed:
       xcode-select --install
 
-      # create ~/Applications/vbox/vbox.app + per-guest-app launchers:
+      # extra "(Linux)" launchers in ~/Applications/vbox/
       vbox install-apps                   # all guest GUI apps
       vbox install-apps calculator text   # just specific ones
 

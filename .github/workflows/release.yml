@@ -6,6 +6,8 @@ name: release
 #   - macOS universal vbox CLI (ad-hoc signed)        -> dist/vbox-universal.tar.gz
 #   - Linux x86_64 vbox-server + vbox-controld        -> dist/vbox-x86_64-linux-gnu.tar.gz
 #   - Linux aarch64 vbox-server + vbox-controld       -> dist/vbox-aarch64-linux-gnu.tar.gz
+#   - Linux x86_64 musl vbox-server + vbox-controld   -> dist/vbox-x86_64-linux-musl.tar.gz
+#   - Linux aarch64 musl vbox-server + vbox-controld  -> dist/vbox-aarch64-linux-musl.tar.gz
 # Then publish a GitHub Release with every tarball and a SHA256SUMS file,
 # and bump Casks/vbox.rb on main with the new macOS version+sha256.
 
@@ -50,7 +52,7 @@ jobs:
         run: cargo build --release --target x86_64-apple-darwin -p vbox-cli
       - name: Build aarch64-apple-darwin
         run: cargo build --release --target aarch64-apple-darwin -p vbox-cli
-      - name: lipo + ad-hoc codesign + tarball
+      - name: lipo + ad-hoc codesign + prebuild vbox.app + tarball
         id: pack
         env:
           VERSION: ${{ steps.ver.outputs.version }}
@@ -62,8 +64,11 @@ jobs:
             target/aarch64-apple-darwin/release/vbox
           codesign --force --sign - --timestamp=none dist/stage/bin/vbox
           dist/stage/bin/vbox --version
+          # Prebuilt SwiftUI launcher so `brew install --cask vbox` puts
+          # vbox in Launchpad without requiring `vbox install-apps` first.
+          OUT="$PWD/dist/stage" ./scripts/build-mac-app.sh
           tarball="dist/vbox-universal.tar.gz"
-          tar -C dist/stage -czf "$tarball" bin
+          tar -C dist/stage -czf "$tarball" bin vbox.app
           sha="$(shasum -a 256 "$tarball" | awk '{print $1}')"
           echo "sha256=$sha" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v4
@@ -132,8 +137,78 @@ jobs:
           path: dist/*.tar.gz
           if-no-files-found: error
 
+  build-linux-musl:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runs_on: ubuntu-latest
+            target:  x86_64-unknown-linux-musl
+            asset:   x86_64-linux-musl
+          - runs_on: ubuntu-24.04-arm
+            target:  aarch64-unknown-linux-musl
+            asset:   aarch64-linux-musl
+    runs-on: ${{ matrix.runs_on }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Resolve version
+        id: ver
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ matrix.target }}-${{ hashFiles('Cargo.lock') }}
+      - name: Build vbox-server + vbox-controld in Alpine
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.cargo/registry" "$HOME/.cargo/git"
+          docker run --rm \
+            -e CARGO_HOME=/cargo \
+            -e CARGO_TARGET_DIR=/work/target \
+            -e HOST_UID="$(id -u)" \
+            -e HOST_GID="$(id -g)" \
+            -e TARGET="$TARGET" \
+            -v "$PWD":/work \
+            -v "$HOME/.cargo/registry":/cargo/registry \
+            -v "$HOME/.cargo/git":/cargo/git \
+            -w /work \
+            rust:1-alpine \
+            sh -lc '
+              set -eu
+              apk add --no-cache build-base cmake git libxkbcommon-dev perl pkgconf wayland-dev
+              cargo build --release --target "$TARGET" -p vbox-server -p vbox-controld
+              chown -R "$HOST_UID:$HOST_GID" /work/target /cargo
+            '
+      - name: Package tarball
+        id: pack
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+          TARGET:  ${{ matrix.target }}
+          ASSET:   ${{ matrix.asset }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist/stage/bin
+          cp target/${TARGET}/release/vbox-server   dist/stage/bin/
+          cp target/${TARGET}/release/vbox-controld dist/stage/bin/
+          strip dist/stage/bin/* || true
+          tarball="dist/vbox-${ASSET}.tar.gz"
+          tar -C dist/stage -czf "$tarball" bin
+          shasum -a 256 "$tarball"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vbox-${{ matrix.asset }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
   release:
-    needs: [build-macos, build-linux]
+    needs: [build-macos, build-linux, build-linux-musl]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
