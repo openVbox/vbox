@@ -6,6 +6,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). The project is
 pre-1.0; released changes are grouped by release tag, and upcoming work lives
 under `[Unreleased]`.
 
+## [v0.1.2] - 2026-05-20
+
+### Changed
+
+- Bumped package metadata for the v0.1.2 release.
+
 ## [v0.1.1] - 2026-05-20
 
 ### Changed
