@@ -10,11 +10,12 @@
 #   VBOX_PREFIX    binary install prefix               (default: /usr/local)
 #   VBOX_DIR       guest work directory (per-instance) (default: $HOME/vbox)
 #   VBOX_PORT      controld listen port                (default: 5711)
+#   VBOX_LIBC      release libc: gnu or musl           (default: auto)
 #
 # What it does, in order:
-#   1. detect Linux + arch (x86_64 / aarch64)
-#   2. install libxkbcommon via apt / dnf / pacman / zypper
-#   3. download the matching prebuilt tarball from the latest GitHub Release
+#   1. detect Linux + arch (x86_64 / aarch64) + libc (gnu / musl)
+#   2. download the matching prebuilt tarball from the latest GitHub Release
+#   3. install runtime deps via apt / dnf / pacman / zypper / apk
 #   4. install vbox-server + vbox-controld to $VBOX_PREFIX/bin
 #   5. write ~/.config/systemd/user/vbox-controld.service pointing at them
 #   6. systemctl --user enable --now + loginctl enable-linger
@@ -39,6 +40,14 @@ warn() { printf '[vbox] warning: %s\n' "$*" >&2; }
 die()  { printf '[vbox] error: %s\n' "$*" >&2; exit 1; }
 
 need() { command -v "$1" >/dev/null 2>&1 || die "missing required command: $1"; }
+as_root() {
+    if [[ "$(id -u)" -eq 0 ]]; then
+        "$@"
+    else
+        need sudo
+        sudo "$@"
+    fi
+}
 
 # ---------- 1. environment ----------
 [[ "$(uname -s)" = Linux ]] || die "this installer only supports Linux"
@@ -51,29 +60,50 @@ case "$(uname -m)" in
     *) die "unsupported architecture: $(uname -m); build from source instead" ;;
 esac
 
+detect_libc() {
+    case "${VBOX_LIBC:-auto}" in
+        gnu|musl) LIBC="$VBOX_LIBC"; return ;;
+        auto|"") ;;
+        *) die "unsupported VBOX_LIBC=${VBOX_LIBC}; expected gnu, musl, or auto" ;;
+    esac
+
+    if getconf GNU_LIBC_VERSION >/dev/null 2>&1; then
+        LIBC=gnu
+    elif { ldd --version 2>&1 || true; } | grep -qi musl; then
+        LIBC=musl
+    else
+        LIBC=gnu
+        warn "could not detect libc; defaulting to linux-gnu release"
+    fi
+}
+
+detect_libc
+
 # ---------- 2. runtime deps ----------
 install_runtime_deps() {
     if command -v apt-get >/dev/null 2>&1; then
-        sudo apt-get update -qq
-        sudo apt-get install -y --no-install-recommends libxkbcommon0
+        as_root apt-get update -qq
+        as_root apt-get install -y --no-install-recommends libxkbcommon0 libwayland-server0
     elif command -v dnf >/dev/null 2>&1; then
-        sudo dnf install -y libxkbcommon
+        as_root dnf install -y libxkbcommon libwayland-server
     elif command -v pacman >/dev/null 2>&1; then
-        sudo pacman -Sy --noconfirm libxkbcommon
+        as_root pacman -Sy --noconfirm libxkbcommon wayland
     elif command -v zypper >/dev/null 2>&1; then
-        sudo zypper --non-interactive install libxkbcommon0
+        as_root zypper --non-interactive install libxkbcommon0 libwayland-server0
+    elif command -v apk >/dev/null 2>&1; then
+        as_root apk add --no-cache libxkbcommon wayland-libs-server
     else
-        warn "no supported package manager found; ensure libxkbcommon is installed"
+        warn "no supported package manager found; ensure libxkbcommon and libwayland-server are installed"
     fi
 }
 
 # ---------- 3. download tarball ----------
 download_and_extract() {
     if [[ "$VERSION" = latest ]]; then
-        url="https://github.com/$REPO/releases/latest/download/vbox-${ARCH}-linux-gnu.tar.gz"
+        url="https://github.com/$REPO/releases/latest/download/vbox-${ARCH}-linux-${LIBC}.tar.gz"
     else
         ver="${VERSION#v}"
-        url="https://github.com/$REPO/releases/download/v${ver}/vbox-${ARCH}-linux-gnu.tar.gz"
+        url="https://github.com/$REPO/releases/download/v${ver}/vbox-${ARCH}-linux-${LIBC}.tar.gz"
     fi
     EXTRACT_DIR="$(mktemp -d)"
     trap 'rm -rf "$EXTRACT_DIR"' EXIT
@@ -88,9 +118,9 @@ download_and_extract() {
 # ---------- 4. install binaries ----------
 install_binaries() {
     log "installing binaries to $PREFIX/bin"
-    sudo install -m 0755 -d "$PREFIX/bin"
-    sudo install -m 0755 "$EXTRACT_DIR/bin/vbox-server"   "$PREFIX/bin/vbox-server"
-    sudo install -m 0755 "$EXTRACT_DIR/bin/vbox-controld" "$PREFIX/bin/vbox-controld"
+    as_root install -m 0755 -d "$PREFIX/bin"
+    as_root install -m 0755 "$EXTRACT_DIR/bin/vbox-server"   "$PREFIX/bin/vbox-server"
+    as_root install -m 0755 "$EXTRACT_DIR/bin/vbox-controld" "$PREFIX/bin/vbox-controld"
 }
 
 # ---------- 5. systemd user unit ----------
@@ -161,6 +191,7 @@ main() {
 vbox guest daemon is up.
 
   binaries : $PREFIX/bin/vbox-{server,controld}
+  release  : linux-$LIBC ($ARCH)
   work dir : $WORK_DIR
   service  : $SERVICE  (port $PORT)
   token    : $TOKEN_FILE
