@@ -183,7 +183,7 @@ jobs:
             sh -c '
               set -eu
               export PATH="/usr/local/cargo/bin:$PATH"
-              apk add --no-cache build-base cmake git libxkbcommon-dev perl pkgconf wayland-dev
+              apk add --no-cache build-base cmake git libxkbcommon-dev libxkbcommon-static perl pkgconf wayland-dev
               cargo --version
               cargo build --release --target "$TARGET" -p vbox-server -p vbox-controld
               chown -R "$HOST_UID:$HOST_GID" /work/target /cargo
