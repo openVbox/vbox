@@ -153,6 +153,13 @@ enum L10n {
         "Field identity": "Private key file",
         "Field identity placeholder": "e.g. ~/.ssh/vbox_ed25519",
         "Field identity hint": "Force a specific SSH private key file when needed.",
+        "Field identity browse": "Choose…",
+        "Field password": "Password",
+        "Field password placeholder": "Optional — stored in macOS Keychain",
+        "Field password hint": "Password is kept in your local macOS Keychain only; we never write it to disk in plain text.",
+        "Field password current": "Saved in Keychain",
+        "Field password clear": "Clear",
+        "Field password change placeholder": "Leave blank to keep existing",
         "Guest path section": "Guest path",
         "Field guestdir": "Workspace directory",
         "Field guestdir placeholder": "e.g. /home/ubuntu/vbox",
@@ -309,6 +316,13 @@ enum L10n {
         "Field identity": "개인키 파일",
         "Field identity placeholder": "예: ~/.ssh/vbox_ed25519",
         "Field identity hint": "특정 SSH 개인키 파일을 강제할 때만 지정.",
+        "Field identity browse": "파일 선택…",
+        "Field password": "비밀번호",
+        "Field password placeholder": "선택 — macOS 키체인에 저장",
+        "Field password hint": "비밀번호는 로컬 macOS 키체인에만 저장되며, 평문으로 디스크에 기록되지 않습니다.",
+        "Field password current": "키체인에 저장됨",
+        "Field password clear": "삭제",
+        "Field password change placeholder": "비워두면 기존 값 유지",
         "Guest path section": "게스트 경로",
         "Field guestdir": "작업 디렉터리",
         "Field guestdir placeholder": "예: /home/ubuntu/vbox",
@@ -461,6 +475,13 @@ enum L10n {
         "Field identity": "私钥文件",
         "Field identity placeholder": "例如: ~/.ssh/vbox_ed25519",
         "Field identity hint": "需要强制指定 SSH 私钥时填写。",
+        "Field identity browse": "选择…",
+        "Field password": "密码",
+        "Field password placeholder": "可选 — 保存在 macOS 钥匙串中",
+        "Field password hint": "密码仅保存在本地 macOS 钥匙串中，绝不会以明文形式写入磁盘。",
+        "Field password current": "已保存在钥匙串",
+        "Field password clear": "清除",
+        "Field password change placeholder": "留空保留现有值",
         "Guest path section": "客户机路径",
         "Field guestdir": "工作目录",
         "Field guestdir placeholder": "例如: /home/ubuntu/vbox",
@@ -613,6 +634,13 @@ enum L10n {
         "Field identity": "秘密鍵ファイル",
         "Field identity placeholder": "例: ~/.ssh/vbox_ed25519",
         "Field identity hint": "特定の SSH 秘密鍵を強制する場合のみ。",
+        "Field identity browse": "選択…",
+        "Field password": "パスワード",
+        "Field password placeholder": "任意 — macOS キーチェーンに保存",
+        "Field password hint": "パスワードはローカルの macOS キーチェーンにのみ保存され、平文でディスクに書き込まれることはありません。",
+        "Field password current": "キーチェーンに保存済み",
+        "Field password clear": "クリア",
+        "Field password change placeholder": "空欄のままで既存の値を維持",
         "Guest path section": "ゲストパス",
         "Field guestdir": "作業ディレクトリ",
         "Field guestdir placeholder": "例: /home/ubuntu/vbox",
@@ -1262,10 +1290,12 @@ struct LibraryWindow: View {
             MachineConfigSheet(machine: machine, model: machinesModel)
         }
         .sheet(isPresented: $showAddRemoteAtRoot) {
-            AddRemoteSheet { name, ssh, dir, osRaw in
+            AddRemoteSheet { name, ssh, dir, osRaw, identityFile, password in
                 Task {
                     let ok = await machinesModel.addRemote(name: name, ssh: ssh,
-                                                            guestDir: dir, osRaw: osRaw)
+                                                            guestDir: dir, osRaw: osRaw,
+                                                            identityFile: identityFile,
+                                                            password: password)
                     if ok { showAddRemoteAtRoot = false }
                 }
             }
@@ -1781,17 +1811,21 @@ enum VBoxRunner {
         return env
     }
 
-    static func run(_ args: [String], config: AppConfig, override: GuestMachine?) async -> CommandResult {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: config.cliPath)
-        process.arguments = ["--no-build"] + args
-        process.environment = makeEnvironment(config: config, override: override)
-
+    static func run(_ args: [String], config: AppConfig, override: GuestMachine?,
+                    stdinText: String? = nil) async -> CommandResult {
+        let process = makeProcess(args: args, config: config, override: override)
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = pipe
+        let stdinPipe: Pipe? = stdinText != nil ? Pipe() : nil
+        process.standardInput = stdinPipe
+
         do {
             try process.run()
+            if let stdinPipe, let data = stdinText?.data(using: .utf8) {
+                stdinPipe.fileHandleForWriting.write(data)
+                try? stdinPipe.fileHandleForWriting.close()
+            }
             process.waitUntilExit()
             let data = pipe.fileHandleForReading.readDataToEndOfFile()
             let output = String(data: data, encoding: .utf8) ?? ""
@@ -1801,6 +1835,15 @@ enum VBoxRunner {
         }
     }
 
+    private static func makeProcess(args: [String], config: AppConfig,
+                                    override: GuestMachine?) -> Process {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: config.cliPath)
+        process.arguments = ["--no-build"] + args
+        process.environment = makeEnvironment(config: config, override: override)
+        return process
+    }
+
     // stdout/stderr 를 라인 단위로 받아 onLine 콜백 호출. install-apps 같이
     // 진행률 표시가 필요한 long-running 명령 전용. onLine 은 임의 thread 에서
     // 호출될 수 있으므로 호출 측이 @MainActor 로 넘겨받아야 한다.
@@ -1808,11 +1851,7 @@ enum VBoxRunner {
                              config: AppConfig,
                              override: GuestMachine?,
                              onLine: @escaping @Sendable (String) -> Void) async -> CommandResult {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: config.cliPath)
-        process.arguments = ["--no-build"] + args
-        process.environment = makeEnvironment(config: config, override: override)
-
+        let process = makeProcess(args: args, config: config, override: override)
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = pipe
@@ -2123,11 +2162,34 @@ final class MachinesModel: ObservableObject {
     }
 
     // 원격 호스트 등록 — vbox remote add 호출 후 목록 refresh.
-    func addRemote(name: String, ssh: String, guestDir: String, osRaw: String) async -> Bool {
+    func setPassword(for machine: GuestMachine, password: String) async -> Bool {
+        let result = await VBoxRunner.run(
+            ["machines", "set", machine.uuid, "password", password],
+            config: config, override: nil)
+        return result.status == 0
+    }
+
+    func clearPassword(for machine: GuestMachine) async -> Bool {
+        let result = await VBoxRunner.run(
+            ["machines", "unset", machine.uuid, "password"],
+            config: config, override: nil)
+        return result.status == 0
+    }
+
+    func addRemote(name: String, ssh: String, guestDir: String, osRaw: String,
+                   identityFile: String = "", password: String = "") async -> Bool {
         var args = ["remote", "add", "--name", name, "--ssh", ssh]
-        if !guestDir.isEmpty { args += ["--dir", guestDir] }
-        if !osRaw.isEmpty    { args += ["--os-raw", osRaw] }
-        let result = await VBoxRunner.run(args, config: config, override: nil)
+        if !guestDir.isEmpty     { args += ["--dir", guestDir] }
+        if !osRaw.isEmpty        { args += ["--os-raw", osRaw] }
+        if !identityFile.isEmpty { args += ["--identity-file", identityFile] }
+        let stdinText: String?
+        if !password.isEmpty {
+            args.append("--password-stdin")
+            stdinText = password
+        } else {
+            stdinText = nil
+        }
+        let result = await VBoxRunner.run(args, config: config, override: nil, stdinText: stdinText)
         if result.status != 0 {
             status = result.output
                 .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2417,12 +2479,15 @@ struct MachinesSheet: View {
 // 원격 SSH 호스트 추가 폼. MachineConfigSheet 와 같은 시각 언어 (grouped Form +
 // labeledField helper). 필수: 이름 + SSH 타겟. 나머지는 선택.
 struct AddRemoteSheet: View {
-    let onSubmit: (_ name: String, _ ssh: String, _ guestDir: String, _ osRaw: String) -> Void
+    let onSubmit: (_ name: String, _ ssh: String, _ guestDir: String, _ osRaw: String,
+                   _ identityFile: String, _ password: String) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var name = ""
     @State private var ssh = ""
     @State private var guestDir = ""
     @State private var osRaw = ""
+    @State private var identityFile = ""
+    @State private var password = ""
 
     private var canSubmit: Bool {
         !name.trimmed().isEmpty
@@ -2454,6 +2519,11 @@ struct AddRemoteSheet: View {
                     }
 
                     configSectionBox(L("Optional fields")) {
+                        identityFileRow(text: $identityFile,
+                                        hint: L("Field identity hint"))
+                        passwordRow(text: $password,
+                                    placeholder: L("Field password placeholder"),
+                                    hint: L("Field password hint"))
                         labeledField(L("Workdir"), placeholder: L("Workdir placeholder"),
                                      text: $guestDir,
                                      hint: L("Workdir hint placeholder"))
@@ -2470,7 +2540,8 @@ struct AddRemoteSheet: View {
                 Button(L("Cancel")) { dismiss() }.keyboardShortcut(.cancelAction)
                 Button(L("Add")) {
                     onSubmit(name.trimmed(), ssh.trimmed(),
-                             guestDir.trimmed(), osRaw.trimmed())
+                             guestDir.trimmed(), osRaw.trimmed(),
+                             identityFile.trimmed(), password)
                 }
                 .keyboardShortcut(.defaultAction)
                 .buttonStyle(.borderedProminent)
@@ -2478,7 +2549,7 @@ struct AddRemoteSheet: View {
             }
         }
         .padding(20)
-        .frame(minWidth: 560, idealWidth: 600, minHeight: 520, idealHeight: 560)
+        .frame(minWidth: 560, idealWidth: 620, minHeight: 620, idealHeight: 660)
     }
 }
 
@@ -2493,6 +2564,9 @@ struct MachineConfigSheet: View {
     @State private var sshHost = ""
     @State private var sshPort = ""
     @State private var identityFile = ""
+    @State private var password = ""
+    @State private var clearPasswordRequested = false
+    @State private var originalHasPassword = false
     @State private var guestDir = ""
     @State private var port = ""
     @State private var socket = ""
@@ -2536,9 +2610,12 @@ struct MachineConfigSheet: View {
                             labeledField(L("Field ssh port"), placeholder: L("Field ssh port placeholder"),
                                          text: $sshPort,
                                          hint: L("Field ssh port hint"))
-                            labeledField(L("Field identity"), placeholder: L("Field identity placeholder"),
-                                         text: $identityFile,
-                                         hint: L("Field identity hint"))
+                            identityFileRow(text: $identityFile,
+                                            hint: L("Field identity hint"))
+                            passwordChangeRow(text: $password,
+                                              hasExisting: originalHasPassword,
+                                              clearRequested: $clearPasswordRequested,
+                                              hint: L("Field password hint"))
                         }
 
                         configSectionBox(L("Guest path section")) {
@@ -2612,6 +2689,9 @@ struct MachineConfigSheet: View {
         sshHost = map["ssh_host"] ?? ""
         sshPort = map["ssh_port"] ?? ""
         identityFile = map["identity_file"] ?? ""
+        password = ""
+        clearPasswordRequested = false
+        originalHasPassword = (map["has_password"] ?? "") == "true"
         guestDir = map["guest_dir"] ?? ""
         port = map["port"] ?? ""
         socket = map["socket"] ?? ""
@@ -2642,6 +2722,11 @@ struct MachineConfigSheet: View {
         let changes = current.filter { (k, v) in (original[k] ?? "") != v }
         if !changes.isEmpty {
             _ = await model.saveConfig(for: machine, changes: changes)
+        }
+        if !password.isEmpty {
+            _ = await model.setPassword(for: machine, password: password)
+        } else if clearPasswordRequested && originalHasPassword {
+            _ = await model.clearPassword(for: machine)
         }
         isSaving = false
         dismiss()

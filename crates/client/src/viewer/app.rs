@@ -664,7 +664,7 @@ impl ViewerWindow {
         let width = width.max(1);
         let height = height.max(1);
         let size_changed = self.frame.width != width || self.frame.height != height;
-        self.frame.resize(width, height);
+        self.frame.resize_for_remote_size(width, height);
         if !size_changed {
             return;
         }

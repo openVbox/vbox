@@ -74,6 +74,22 @@ impl FrameBuffer {
         // intentionally: self.matte is preserved
     }
 
+    pub(crate) fn resize_for_remote_size(&mut self, width: u32, height: u32) {
+        if self.width == width && self.height == height {
+            return;
+        }
+        // Remote shrink is followed by a full root tile. Clear first so
+        // transparent CSD/shadow pixels cannot reveal the old larger frame.
+        let shrinks = width < self.width || height < self.height;
+        if shrinks {
+            self.replace_buffer_clearing(width, height);
+        } else {
+            self.replace_buffer_preserving_pixels(width, height);
+        }
+        self.content = FrameRect::new(0, 0, width.max(1), height.max(1));
+        // intentionally: self.matte is preserved
+    }
+
     fn grow_preserving_pixels(&mut self, width: u32, height: u32) {
         if self.width == width && self.height == height {
             return;
@@ -83,8 +99,9 @@ impl FrameBuffer {
 
     /// Reallocate `self.pixels` to a `(width, height)` buffer, row-copying as
     /// many pixels as fit from the old buffer. Caller decides what to do with
-    /// `self.content` afterwards: `resize` resets it, `grow_preserving_pixels`
-    /// (driven by `apply_tile`) leaves it for `update_content_rect` to recompute.
+    /// `self.content` afterwards: `resize` / `resize_for_remote_size` reset
+    /// it, `grow_preserving_pixels` (driven by `apply_tile`) leaves it for
+    /// `update_content_rect` to recompute.
     fn replace_buffer_preserving_pixels(&mut self, width: u32, height: u32) {
         let old_pixels = std::mem::take(&mut self.pixels);
         let old_width = self.width;
@@ -100,6 +117,12 @@ impl FrameBuffer {
             self.pixels[dst_off..dst_off + copy_w]
                 .copy_from_slice(&old_pixels[src_off..src_off + copy_w]);
         }
+    }
+
+    fn replace_buffer_clearing(&mut self, width: u32, height: u32) {
+        self.width = width;
+        self.height = height;
+        self.pixels = vec![TRANSPARENT_PIXEL; width as usize * height as usize];
     }
 
     pub(crate) fn apply_tile(&mut self, tile: &FrameTile) -> Result<bool> {
@@ -914,6 +937,58 @@ mod tests {
         assert_eq!(frame.pixels[2], 0xff_00_00_04);
         assert_eq!(frame.pixels[3], 0xff_00_00_05);
         assert_eq!(frame.pixels.len(), 4);
+    }
+
+    #[test]
+    fn remote_resize_clears_old_pixels_on_shrink() {
+        let mut frame = FrameBuffer::new(4, 4);
+        frame.pixels = (0..16).map(|n| 0xff_00_00_00 | (n as u32)).collect();
+        frame.matte = 0x00_ff_ff_ff;
+
+        frame.resize_for_remote_size(2, 2);
+
+        assert_eq!((frame.width, frame.height), (2, 2));
+        assert_eq!(frame.pixels, vec![TRANSPARENT_PIXEL; 4]);
+        assert_eq!(frame.content, FrameRect::new(0, 0, 2, 2));
+        assert_eq!(frame.matte, 0x00_ff_ff_ff);
+    }
+
+    #[test]
+    fn remote_shrink_then_transparent_tile_does_not_keep_old_pixels() {
+        let mut frame = FrameBuffer::new(4, 4);
+        frame.pixels = (0..16).map(|n| 0xff_00_00_00 | (n as u32)).collect();
+
+        frame.resize_for_remote_size(2, 2);
+        frame
+            .apply_tile(&FrameTile {
+                id: 1,
+                x: 0,
+                y: 0,
+                w: 2,
+                h: 2,
+                stride: 8,
+                encoding: PixelEncoding::RawRgba,
+                bytes: vec![0; 16],
+            })
+            .unwrap();
+
+        assert_eq!(frame.pixels, vec![TRANSPARENT_PIXEL; 4]);
+        assert_eq!(frame.content, FrameRect::new(0, 0, 2, 2));
+    }
+
+    #[test]
+    fn remote_resize_preserves_old_pixels_on_grow() {
+        let mut frame = FrameBuffer::new(2, 2);
+        frame.pixels = vec![0xff_00_00_00, 0xff_00_00_01, 0xff_00_00_02, 0xff_00_00_03];
+
+        frame.resize_for_remote_size(4, 4);
+
+        assert_eq!(frame.pixels[0], 0xff_00_00_00);
+        assert_eq!(frame.pixels[1], 0xff_00_00_01);
+        assert_eq!(frame.pixels[4], 0xff_00_00_02);
+        assert_eq!(frame.pixels[5], 0xff_00_00_03);
+        assert_eq!(frame.pixels[3], TRANSPARENT_PIXEL);
+        assert_eq!(frame.pixels[12], TRANSPARENT_PIXEL);
     }
 
     #[test]
