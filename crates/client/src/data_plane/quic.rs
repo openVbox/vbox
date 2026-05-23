@@ -257,7 +257,7 @@ async fn view_network_async(
                         payload_bytes = payload_bytes.saturating_add(chunk.bytes.len() as u64);
                         if let Some(tile) = assembler.push(chunk) {
                             frames = frames.saturating_add(1);
-                            if debug_enabled() && (frames <= 5 || frames % 60 == 0) {
+                            if debug_enabled() && (frames <= 5 || frames.is_multiple_of(60)) {
                                 eprintln!(
                                     "debug: quic datagram reassembled frame id={} bytes={} total_frames={} total_chunks={} total_payload_bytes={}",
                                     tile.id,
@@ -300,10 +300,10 @@ async fn view_network_async(
                 Ok(mut recv) => {
                     let proxy = channel_proxy.clone();
                     tokio::spawn(async move {
-                        if let Err(e) = read_channel_stream(&mut recv, proxy).await {
-                            if debug_enabled() {
-                                eprintln!("debug: QUIC channel stream ended: {e:#}");
-                            }
+                        if let Err(e) = read_channel_stream(&mut recv, proxy).await
+                            && debug_enabled()
+                        {
+                            eprintln!("debug: QUIC channel stream ended: {e:#}");
                         }
                     });
                 }

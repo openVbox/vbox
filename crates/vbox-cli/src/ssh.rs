@@ -36,7 +36,7 @@ impl SshOptions {
         }
     }
 
-    fn to_shell_string(self, program: &str) -> String {
+    fn to_shell_string(&self, program: &str) -> String {
         let env_prefix = if self.env.is_empty() {
             String::new()
         } else {

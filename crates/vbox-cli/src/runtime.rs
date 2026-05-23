@@ -365,10 +365,10 @@ pub(crate) fn library(ctx: &AppContext, args: LibraryArgs) -> Result<()> {
 }
 
 pub(crate) fn library_ui(ctx: &AppContext) -> Result<()> {
-    if !app_cache(ctx).is_file() {
-        if let Err(err) = refresh_app_library(ctx) {
-            eprintln!("[vbox] warning: app library refresh failed: {err:#}");
-        }
+    if !app_cache(ctx).is_file()
+        && let Err(err) = refresh_app_library(ctx)
+    {
+        eprintln!("[vbox] warning: app library refresh failed: {err:#}");
     }
     crate::library_ui::open(ctx, &app_cache(ctx), &launcher_dir())
 }
@@ -1447,10 +1447,10 @@ fn launcher_app_path(row: &AppRecord) -> PathBuf {
 }
 
 fn launcher_display_name(name: &str) -> String {
-    if let Some(suffix) = brand::env_var("VBOX_LAUNCHER_SUFFIX") {
-        if !suffix.is_empty() {
-            return format!("{name} ({suffix})");
-        }
+    if let Some(suffix) = brand::env_var("VBOX_LAUNCHER_SUFFIX")
+        && !suffix.is_empty()
+    {
+        return format!("{name} ({suffix})");
     }
     name.to_string()
 }
@@ -1608,6 +1608,236 @@ fn plist_escape(value: &str) -> String {
         .replace('<', "&lt;")
         .replace('>', "&gt;")
 }
+
+const APP_LIBRARY_PY: &str = r#"
+import base64
+import configparser
+import json
+import locale
+import os
+from pathlib import Path
+import shlex
+import shutil
+
+locale_name = (locale.getlocale()[0] or os.environ.get("LANG") or "").split(".")[0]
+locale_short = locale_name.split("_")[0] if locale_name else ""
+app_dirs = [
+    Path.home() / ".local/share/applications",
+    Path("/usr/local/share/applications"),
+    Path("/usr/share/applications"),
+    Path.home() / ".local/share/flatpak/exports/share/applications",
+    Path("/var/lib/flatpak/exports/share/applications"),
+]
+field_codes = {"%f", "%F", "%u", "%U", "%d", "%D", "%n", "%N", "%i", "%c", "%k", "%v", "%m"}
+
+def clean(value):
+    return " ".join(str(value).replace("\t", " ").split())
+
+def localized(group, key):
+    for candidate in (
+        f"{key}[{locale_name}]" if locale_name else "",
+        f"{key}[{locale_short}]" if locale_short else "",
+        key,
+    ):
+        if candidate and candidate in group:
+            return group.get(candidate)
+    return ""
+
+def truthy(value):
+    return str(value).strip().lower() == "true"
+
+def parse_exec(value):
+    try:
+        parts = shlex.split(value)
+    except ValueError:
+        return []
+    out = []
+    for part in parts:
+        if part in field_codes or part.startswith("%") or part.startswith("@@"):
+            continue
+        out.append(part.replace("%%", "%"))
+    if not out:
+        return []
+    command = out[0]
+    if "/" in command:
+        if not Path(command).exists():
+            return []
+    elif shutil.which(command) is None:
+        return []
+    return out
+
+def normalize_argv(app_id, argv):
+    if not argv:
+        return argv
+    command = Path(argv[0]).name
+    if app_id == "org.gnome.Ptyxis" and command == "ptyxis":
+        if not any(arg in ("-s", "--standalone") for arg in argv[1:]):
+            return [argv[0], "--standalone", *argv[1:]]
+    return argv
+
+def load_desktop(path):
+    parser = configparser.ConfigParser(interpolation=None, strict=False)
+    try:
+        parser.read(path, encoding="utf-8")
+    except Exception:
+        return None
+    if not parser.has_section("Desktop Entry"):
+        return None
+    group = parser["Desktop Entry"]
+    if group.get("Type", "Application") != "Application":
+        return None
+    if truthy(group.get("NoDisplay", "")) or truthy(group.get("Hidden", "")) or truthy(group.get("Terminal", "")):
+        return None
+    name = localized(group, "Name")
+    exec_line = group.get("Exec", "")
+    app_id = path.name[:-8] if path.name.endswith(".desktop") else path.stem
+    argv = normalize_argv(app_id, parse_exec(exec_line))
+    if not name or not argv:
+        return None
+    return {
+        "id": clean(app_id),
+        "name": clean(name),
+        "exec": " ".join(shlex.quote(part) for part in argv),
+        "icon": clean(group.get("Icon", "")),
+        "desktop": clean(str(path)),
+        "categories": clean(group.get("Categories", "")),
+        "argv_b64": base64.b64encode(json.dumps(argv, ensure_ascii=False).encode()).decode(),
+    }
+
+seen = set()
+apps = []
+for directory in app_dirs:
+    if not directory.is_dir():
+        continue
+    for path in sorted(directory.glob("*.desktop")):
+        app = load_desktop(path)
+        if not app or app["id"] in seen:
+            continue
+        seen.add(app["id"])
+        apps.append(app)
+apps.sort(key=lambda item: (item["name"].casefold(), item["id"].casefold()))
+for app in apps:
+    print("\t".join(app[key] for key in ("id", "name", "exec", "icon", "desktop", "categories", "argv_b64")))
+"#;
+
+const APP_ICON_EXPORT_PY: &str = r#"
+import base64
+import configparser
+import os
+import re
+from pathlib import Path
+
+home = Path.home()
+app_dirs = [
+    home / ".local/share/applications",
+    Path("/usr/local/share/applications"),
+    Path("/usr/share/applications"),
+    Path("/var/lib/flatpak/exports/share/applications"),
+    home / ".local/share/flatpak/exports/share/applications",
+]
+icon_roots = [
+    home / ".local/share/icons",
+    home / ".icons",
+    Path("/usr/local/share/icons"),
+    Path("/usr/share/icons"),
+    Path("/usr/local/share/pixmaps"),
+    Path("/usr/share/pixmaps"),
+]
+exts = ["png", "svg", "xpm", "jpg", "jpeg"]
+
+def truthy(value):
+    return value.strip().lower() in ("1", "true", "yes")
+
+def clean(value):
+    return " ".join(value.replace("\t", " ").split())
+
+def load_desktop(path):
+    parser = configparser.ConfigParser(interpolation=None, strict=False)
+    try:
+        parser.read(path, encoding="utf-8")
+    except Exception:
+        return None
+    if not parser.has_section("Desktop Entry"):
+        return None
+    group = parser["Desktop Entry"]
+    if group.get("Type", "Application") != "Application":
+        return None
+    if truthy(group.get("NoDisplay", "")) or truthy(group.get("Hidden", "")) or truthy(group.get("Terminal", "")):
+        return None
+    app_id = path.name[:-8] if path.name.endswith(".desktop") else path.stem
+    icon = clean(group.get("Icon", ""))
+    if not icon:
+        return None
+    return clean(app_id), icon
+
+def icon_score(path):
+    text = str(path)
+    suffix = path.suffix.lower().lstrip(".")
+    ext_score = {"png": 3000, "svg": 2000, "jpg": 1000, "jpeg": 1000, "xpm": 500}.get(suffix, 0)
+    size_score = 0
+    match = re.search(r"([0-9]{2,4})x([0-9]{2,4})", text)
+    if match:
+        size_score = max(int(match.group(1)), int(match.group(2)))
+    elif "scalable" in path.parts:
+        size_score = 384
+    hicolor = 100 if "hicolor" in path.parts else 0
+    return ext_score + size_score + hicolor
+
+def resolve_icon(icon):
+    raw = icon.strip()
+    if not raw:
+        return None
+    direct = Path(os.path.expanduser(raw))
+    if direct.is_absolute() and direct.is_file():
+        return direct
+    name = Path(raw).name
+    suffix = Path(name).suffix.lower().lstrip(".")
+    patterns = [name] if suffix in exts else [f"{name}.{ext}" for ext in exts]
+    candidates = []
+    for root in icon_roots:
+        if not root.is_dir():
+            continue
+        for pattern in patterns:
+            direct = root / pattern
+            if direct.is_file():
+                candidates.append(direct)
+    for root in icon_roots:
+        if not root.is_dir():
+            continue
+        for pattern in patterns:
+            try:
+                candidates.extend(path for path in root.rglob(pattern) if path.is_file())
+            except Exception:
+                pass
+    if not candidates:
+        return None
+    candidates.sort(key=lambda path: (icon_score(path), -len(str(path))), reverse=True)
+    return candidates[0]
+
+seen = set()
+for directory in app_dirs:
+    if not directory.is_dir():
+        continue
+    for desktop in sorted(directory.glob("*.desktop")):
+        loaded = load_desktop(desktop)
+        if not loaded:
+            continue
+        app_id, icon = loaded
+        if app_id in seen:
+            continue
+        path = resolve_icon(icon)
+        if not path:
+            continue
+        try:
+            data = path.read_bytes()
+        except Exception:
+            continue
+        if not data or len(data) > 4 * 1024 * 1024:
+            continue
+        seen.add(app_id)
+        ext = path.suffix.lower().lstrip(".") or "bin"
+        print(f"{app_id}\t{ext}\t{base64.b64encode(data).decode()}")
+"#;
 
 #[cfg(test)]
 mod tests {
@@ -1888,233 +2118,3 @@ mod tests {
         assert!(text.contains("guest_dir=<unset>"));
     }
 }
-
-const APP_LIBRARY_PY: &str = r#"
-import base64
-import configparser
-import json
-import locale
-import os
-from pathlib import Path
-import shlex
-import shutil
-
-locale_name = (locale.getlocale()[0] or os.environ.get("LANG") or "").split(".")[0]
-locale_short = locale_name.split("_")[0] if locale_name else ""
-app_dirs = [
-    Path.home() / ".local/share/applications",
-    Path("/usr/local/share/applications"),
-    Path("/usr/share/applications"),
-    Path.home() / ".local/share/flatpak/exports/share/applications",
-    Path("/var/lib/flatpak/exports/share/applications"),
-]
-field_codes = {"%f", "%F", "%u", "%U", "%d", "%D", "%n", "%N", "%i", "%c", "%k", "%v", "%m"}
-
-def clean(value):
-    return " ".join(str(value).replace("\t", " ").split())
-
-def localized(group, key):
-    for candidate in (
-        f"{key}[{locale_name}]" if locale_name else "",
-        f"{key}[{locale_short}]" if locale_short else "",
-        key,
-    ):
-        if candidate and candidate in group:
-            return group.get(candidate)
-    return ""
-
-def truthy(value):
-    return str(value).strip().lower() == "true"
-
-def parse_exec(value):
-    try:
-        parts = shlex.split(value)
-    except ValueError:
-        return []
-    out = []
-    for part in parts:
-        if part in field_codes or part.startswith("%") or part.startswith("@@"):
-            continue
-        out.append(part.replace("%%", "%"))
-    if not out:
-        return []
-    command = out[0]
-    if "/" in command:
-        if not Path(command).exists():
-            return []
-    elif shutil.which(command) is None:
-        return []
-    return out
-
-def normalize_argv(app_id, argv):
-    if not argv:
-        return argv
-    command = Path(argv[0]).name
-    if app_id == "org.gnome.Ptyxis" and command == "ptyxis":
-        if not any(arg in ("-s", "--standalone") for arg in argv[1:]):
-            return [argv[0], "--standalone", *argv[1:]]
-    return argv
-
-def load_desktop(path):
-    parser = configparser.ConfigParser(interpolation=None, strict=False)
-    try:
-        parser.read(path, encoding="utf-8")
-    except Exception:
-        return None
-    if not parser.has_section("Desktop Entry"):
-        return None
-    group = parser["Desktop Entry"]
-    if group.get("Type", "Application") != "Application":
-        return None
-    if truthy(group.get("NoDisplay", "")) or truthy(group.get("Hidden", "")) or truthy(group.get("Terminal", "")):
-        return None
-    name = localized(group, "Name")
-    exec_line = group.get("Exec", "")
-    app_id = path.name[:-8] if path.name.endswith(".desktop") else path.stem
-    argv = normalize_argv(app_id, parse_exec(exec_line))
-    if not name or not argv:
-        return None
-    return {
-        "id": clean(app_id),
-        "name": clean(name),
-        "exec": " ".join(shlex.quote(part) for part in argv),
-        "icon": clean(group.get("Icon", "")),
-        "desktop": clean(str(path)),
-        "categories": clean(group.get("Categories", "")),
-        "argv_b64": base64.b64encode(json.dumps(argv, ensure_ascii=False).encode()).decode(),
-    }
-
-seen = set()
-apps = []
-for directory in app_dirs:
-    if not directory.is_dir():
-        continue
-    for path in sorted(directory.glob("*.desktop")):
-        app = load_desktop(path)
-        if not app or app["id"] in seen:
-            continue
-        seen.add(app["id"])
-        apps.append(app)
-apps.sort(key=lambda item: (item["name"].casefold(), item["id"].casefold()))
-for app in apps:
-    print("\t".join(app[key] for key in ("id", "name", "exec", "icon", "desktop", "categories", "argv_b64")))
-"#;
-
-const APP_ICON_EXPORT_PY: &str = r#"
-import base64
-import configparser
-import os
-import re
-from pathlib import Path
-
-home = Path.home()
-app_dirs = [
-    home / ".local/share/applications",
-    Path("/usr/local/share/applications"),
-    Path("/usr/share/applications"),
-    Path("/var/lib/flatpak/exports/share/applications"),
-    home / ".local/share/flatpak/exports/share/applications",
-]
-icon_roots = [
-    home / ".local/share/icons",
-    home / ".icons",
-    Path("/usr/local/share/icons"),
-    Path("/usr/share/icons"),
-    Path("/usr/local/share/pixmaps"),
-    Path("/usr/share/pixmaps"),
-]
-exts = ["png", "svg", "xpm", "jpg", "jpeg"]
-
-def truthy(value):
-    return value.strip().lower() in ("1", "true", "yes")
-
-def clean(value):
-    return " ".join(value.replace("\t", " ").split())
-
-def load_desktop(path):
-    parser = configparser.ConfigParser(interpolation=None, strict=False)
-    try:
-        parser.read(path, encoding="utf-8")
-    except Exception:
-        return None
-    if not parser.has_section("Desktop Entry"):
-        return None
-    group = parser["Desktop Entry"]
-    if group.get("Type", "Application") != "Application":
-        return None
-    if truthy(group.get("NoDisplay", "")) or truthy(group.get("Hidden", "")) or truthy(group.get("Terminal", "")):
-        return None
-    app_id = path.name[:-8] if path.name.endswith(".desktop") else path.stem
-    icon = clean(group.get("Icon", ""))
-    if not icon:
-        return None
-    return clean(app_id), icon
-
-def icon_score(path):
-    text = str(path)
-    suffix = path.suffix.lower().lstrip(".")
-    ext_score = {"png": 3000, "svg": 2000, "jpg": 1000, "jpeg": 1000, "xpm": 500}.get(suffix, 0)
-    size_score = 0
-    match = re.search(r"([0-9]{2,4})x([0-9]{2,4})", text)
-    if match:
-        size_score = max(int(match.group(1)), int(match.group(2)))
-    elif "scalable" in path.parts:
-        size_score = 384
-    hicolor = 100 if "hicolor" in path.parts else 0
-    return ext_score + size_score + hicolor
-
-def resolve_icon(icon):
-    raw = icon.strip()
-    if not raw:
-        return None
-    direct = Path(os.path.expanduser(raw))
-    if direct.is_absolute() and direct.is_file():
-        return direct
-    name = Path(raw).name
-    suffix = Path(name).suffix.lower().lstrip(".")
-    patterns = [name] if suffix in exts else [f"{name}.{ext}" for ext in exts]
-    candidates = []
-    for root in icon_roots:
-        if not root.is_dir():
-            continue
-        for pattern in patterns:
-            direct = root / pattern
-            if direct.is_file():
-                candidates.append(direct)
-    for root in icon_roots:
-        if not root.is_dir():
-            continue
-        for pattern in patterns:
-            try:
-                candidates.extend(path for path in root.rglob(pattern) if path.is_file())
-            except Exception:
-                pass
-    if not candidates:
-        return None
-    candidates.sort(key=lambda path: (icon_score(path), -len(str(path))), reverse=True)
-    return candidates[0]
-
-seen = set()
-for directory in app_dirs:
-    if not directory.is_dir():
-        continue
-    for desktop in sorted(directory.glob("*.desktop")):
-        loaded = load_desktop(desktop)
-        if not loaded:
-            continue
-        app_id, icon = loaded
-        if app_id in seen:
-            continue
-        path = resolve_icon(icon)
-        if not path:
-            continue
-        try:
-            data = path.read_bytes()
-        except Exception:
-            continue
-        if not data or len(data) > 4 * 1024 * 1024:
-            continue
-        seen.add(app_id)
-        ext = path.suffix.lower().lstrip(".") or "bin"
-        print(f"{app_id}\t{ext}\t{base64.b64encode(data).decode()}")
-"#;

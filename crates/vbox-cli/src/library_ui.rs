@@ -185,7 +185,7 @@ const VBOX_LIBRARY_SWIFT: &str =
     include_str!("../../../vbox-swift/Sources/VBoxLibrary/VBoxLibrary.swift");
 
 fn launcher_suffix(ctx: &AppContext) -> String {
-    if let Some(value) = std::env::var("VBOX_LAUNCHER_SUFFIX").ok() {
+    if let Ok(value) = std::env::var("VBOX_LAUNCHER_SUFFIX") {
         return value;
     }
     fs::read_to_string(ctx.state_dir.join("launcher-suffix.txt"))

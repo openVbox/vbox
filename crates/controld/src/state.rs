@@ -92,7 +92,7 @@ impl DaemonState {
                 "reconcile:   {} server_pid={} alive={}",
                 inst.instance, inst.server_pid, alive
             );
-            let outcome = decide_reconcile(&inst, |pid| pid_alive(pid));
+            let outcome = decide_reconcile(&inst, pid_alive);
             match outcome {
                 ReconcileOutcome::Drop => continue,
                 ReconcileOutcome::Recover { app_pids } => {

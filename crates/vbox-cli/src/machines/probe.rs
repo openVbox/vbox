@@ -106,8 +106,7 @@ fn last_meaningful_line(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes)
         .lines()
         .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .last()
+        .rfind(|line| !line.is_empty())
         .unwrap_or("")
         .to_string()
 }

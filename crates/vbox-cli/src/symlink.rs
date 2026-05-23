@@ -39,12 +39,12 @@ fn install_link(link: &Path, target: &Path, force: bool, label: &str) -> Result<
                 target.display()
             );
         } else if force {
-            let meta = fs::symlink_metadata(&link)
+            let meta = fs::symlink_metadata(link)
                 .with_context(|| format!("inspect existing {}", link.display()))?;
             if meta.is_dir() && !meta.file_type().is_symlink() {
                 bail!("refusing to replace directory: {}", link.display());
             }
-            fs::remove_file(&link).with_context(|| format!("remove {}", link.display()))?;
+            fs::remove_file(link).with_context(|| format!("remove {}", link.display()))?;
             symlink(target, link)
                 .with_context(|| format!("symlink {} -> {}", link.display(), target.display()))?;
             eprintln!(
@@ -84,8 +84,7 @@ fn remove_link_if_owned(link: &Path, target: &Path) -> Result<bool> {
     if !link.exists() && link.symlink_metadata().is_err() {
         return Ok(false);
     }
-    let meta =
-        fs::symlink_metadata(&link).with_context(|| format!("inspect {}", link.display()))?;
+    let meta = fs::symlink_metadata(link).with_context(|| format!("inspect {}", link.display()))?;
     if !meta.file_type().is_symlink() {
         bail!("refusing to remove non-symlink: {}", link.display());
     }
@@ -99,7 +98,7 @@ fn remove_link_if_owned(link: &Path, target: &Path) -> Result<bool> {
             current_target
         );
     }
-    fs::remove_file(&link).with_context(|| format!("remove {}", link.display()))?;
+    fs::remove_file(link).with_context(|| format!("remove {}", link.display()))?;
     eprintln!("[vbox] removed cli: {}", link.display());
     Ok(true)
 }
