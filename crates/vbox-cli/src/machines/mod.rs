@@ -115,11 +115,7 @@ fn info_cmd(ctx: &AppContext, target: &str, as_json: bool, with_probe: bool) -> 
     Ok(())
 }
 
-pub(crate) fn load_info(
-    ctx: &AppContext,
-    target: &str,
-    with_probe: bool,
-) -> Result<MachineInfo> {
+pub(crate) fn load_info(ctx: &AppContext, target: &str, with_probe: bool) -> Result<MachineInfo> {
     let record = find_one(ctx, target)?;
     let overrides = collect_extra_overrides(ctx, &record)?;
     let probe = if with_probe {
@@ -381,7 +377,6 @@ pub(crate) fn records(ctx: &AppContext) -> Result<Vec<MachineRecord>> {
     }
     Ok(out)
 }
-
 
 fn prlctl_json<const N: usize>(args: [&str; N]) -> Result<Value> {
     let Ok(output) = Command::new("prlctl").args(args).output() else {

@@ -365,10 +365,10 @@ pub(crate) fn library(ctx: &AppContext, args: LibraryArgs) -> Result<()> {
 }
 
 pub(crate) fn library_ui(ctx: &AppContext) -> Result<()> {
-    if !app_cache(ctx).is_file() {
-        if let Err(err) = refresh_app_library(ctx) {
-            eprintln!("[vbox] warning: app library refresh failed: {err:#}");
-        }
+    if !app_cache(ctx).is_file()
+        && let Err(err) = refresh_app_library(ctx)
+    {
+        eprintln!("[vbox] warning: app library refresh failed: {err:#}");
     }
     crate::library_ui::open(ctx, &app_cache(ctx), &launcher_dir())
 }
@@ -1447,10 +1447,10 @@ fn launcher_app_path(row: &AppRecord) -> PathBuf {
 }
 
 fn launcher_display_name(name: &str) -> String {
-    if let Some(suffix) = brand::env_var("VBOX_LAUNCHER_SUFFIX") {
-        if !suffix.is_empty() {
-            return format!("{name} ({suffix})");
-        }
+    if let Some(suffix) = brand::env_var("VBOX_LAUNCHER_SUFFIX")
+        && !suffix.is_empty()
+    {
+        return format!("{name} ({suffix})");
     }
     name.to_string()
 }
@@ -1607,286 +1607,6 @@ fn plist_escape(value: &str) -> String {
         .replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::context::AppContext;
-    use crate::test_env;
-    use crate::{LogsArgs, SuffixArgs};
-
-    struct TempDir {
-        path: PathBuf,
-    }
-
-    impl Drop for TempDir {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.path);
-        }
-    }
-
-    fn tempdir_for_test() -> TempDir {
-        let path = std::env::temp_dir().join(format!(
-            "vbox-runtime-test-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        fs::create_dir_all(&path).unwrap();
-        TempDir { path }
-    }
-
-    fn ctx(dir: &TempDir) -> AppContext {
-        let client_bin = dir.path.join("target/release/vbox-client");
-        fs::create_dir_all(client_bin.parent().unwrap()).unwrap();
-        fs::write(&client_bin, b"fake client").unwrap();
-        AppContext {
-            root: dir.path.clone(),
-            state_dir: dir.path.join(".vbox"),
-            cli_path: dir.path.join("target/release/vbox"),
-            guest: Some("alice@example.test".to_string()),
-            guest_dir: Some(PathBuf::from("/home/alice/vbox")),
-            instance: "default".to_string(),
-            port: 5710,
-            socket: "vbox-0".to_string(),
-            width: 1024,
-            height: 768,
-            debug: false,
-            build: false,
-        }
-    }
-
-    #[test]
-    fn default_app_args_supplies_calculator_only_for_empty_args() {
-        assert_eq!(
-            default_app_args(Vec::new()),
-            vec![OsString::from("gnome-calculator")]
-        );
-        assert_eq!(
-            default_app_args(vec![OsString::from("gedit")]),
-            vec![OsString::from("gedit")]
-        );
-    }
-
-    #[test]
-    fn runtime_dirs_are_instance_scoped() {
-        let dir = tempdir_for_test();
-        let mut ctx = ctx(&dir);
-        ctx.instance = "dev".to_string();
-        assert_eq!(run_dir(&ctx), ctx.state_dir.join("run/dev"));
-        assert_eq!(log_dir(&ctx), ctx.state_dir.join("logs/dev"));
-        assert_eq!(app_cache(&ctx), ctx.state_dir.join("app-library.tsv"));
-    }
-
-    #[test]
-    fn read_app_cache_skips_short_rows_and_decodes_argv() {
-        let dir = tempdir_for_test();
-        let ctx = ctx(&dir);
-        fs::create_dir_all(&ctx.state_dir).unwrap();
-        let argv = serde_json::to_vec(&vec!["/usr/bin/app", "--flag"]).unwrap();
-        let encoded = base64::engine::general_purpose::STANDARD.encode(argv);
-        fs::write(
-            app_cache(&ctx),
-            format!(
-                "too\tshort\norg.app\tApp\t/usr/bin/app\ticon\t/app.desktop\tUtility\t{encoded}\norg.bad\tBad\tbad\ticon\tbad.desktop\tUtility\tnot-base64\n"
-            ),
-        )
-        .unwrap();
-
-        let rows = read_app_cache(&ctx).unwrap();
-        assert_eq!(rows.len(), 2);
-        assert_eq!(
-            rows[0].argv,
-            vec![OsString::from("/usr/bin/app"), OsString::from("--flag")]
-        );
-        assert_eq!(rows[1].argv, vec![OsString::from("bad")]);
-    }
-
-    #[test]
-    fn selected_matches_empty_filters_or_case_insensitive_substrings() {
-        assert!(selected("org.gnome.Calculator", "Calculator", &[]));
-        assert!(selected(
-            "org.gnome.Calculator",
-            "Calculator",
-            &["calc".to_string()]
-        ));
-        assert!(!selected(
-            "org.gnome.Calculator",
-            "Calculator",
-            &["terminal".to_string()]
-        ));
-    }
-
-    #[test]
-    fn decode_argv_b64_rejects_invalid_payloads() {
-        let argv = serde_json::to_vec(&vec!["app", "--verbose"]).unwrap();
-        let encoded = base64::engine::general_purpose::STANDARD.encode(argv);
-        assert_eq!(
-            decode_argv_b64(&encoded).unwrap(),
-            vec![OsString::from("app"), OsString::from("--verbose")]
-        );
-        assert!(decode_argv_b64("not base64").is_none());
-    }
-
-    #[test]
-    fn instance_context_resets_socket_for_default_and_sanitizes_named_instances() {
-        let dir = tempdir_for_test();
-        let ctx = ctx(&dir);
-        let default = instance_context(&ctx, "default").unwrap();
-        assert_eq!(default.socket, "vbox-0");
-        assert_eq!(default.port, 5710);
-        let named = instance_context(&ctx, "dev box!!west").unwrap();
-        assert_eq!(named.instance, "dev box!!west");
-        assert_eq!(named.socket, "vbox-dev-box--west");
-        assert_eq!(named.port, 5712);
-    }
-
-    #[test]
-    fn instance_context_reuses_stable_distinct_ports_for_named_instances() {
-        let dir = tempdir_for_test();
-        let ctx = ctx(&dir);
-
-        let calc = instance_context(&ctx, "org-gnome-Calculator").unwrap();
-        let maps = instance_context(&ctx, "org-gnome-Maps").unwrap();
-        let calc_again = instance_context(&ctx, "org-gnome-Calculator").unwrap();
-
-        assert_eq!(calc.port, 5712);
-        assert_eq!(maps.port, 5713);
-        assert_eq!(calc_again.port, calc.port);
-        assert_eq!(
-            fs::read_to_string(ctx.state_dir.join(INSTANCE_PORT_ALLOC_FILE)).unwrap(),
-            "org-gnome-Calculator\t5712\norg-gnome-Maps\t5713\n"
-        );
-    }
-
-    #[test]
-    fn shell_quote_and_plist_escape_cover_special_characters() {
-        assert_eq!(shell_quote(OsStr::new("a'b")), "'a'\\''b'");
-        assert_eq!(plist_escape("A&B<C>"), "A&amp;B&lt;C&gt;");
-    }
-
-    #[test]
-    fn launcher_paths_apply_suffix_and_safe_filename() {
-        let _guard = test_env::lock();
-        let dir = tempdir_for_test();
-        test_env::set_var("VBOX_LAUNCHER_DIR", dir.path.join("apps"));
-        test_env::set_var("VBOX_LAUNCHER_SUFFIX", "Guest");
-        let row = AppRecord {
-            id: "org.example.App".to_string(),
-            name: "Example/App: Editor ".to_string(),
-            exec: "example".to_string(),
-            icon: "org.example.App".to_string(),
-            argv_b64: String::new(),
-            argv: vec![OsString::from("example")],
-        };
-        assert_eq!(launcher_display_name("Files"), "Files (Guest)");
-        assert_eq!(safe_app_filename(" Example/App: "), "Example-App-");
-        assert_eq!(
-            launcher_app_path(&row),
-            dir.path.join("apps/Example-App- Editor  (Guest).app")
-        );
-        test_env::remove_var("VBOX_LAUNCHER_DIR");
-        test_env::remove_var("VBOX_LAUNCHER_SUFFIX");
-    }
-
-    #[test]
-    fn build_and_remove_launcher_app_create_expected_bundle_files() {
-        let _guard = test_env::lock();
-        let dir = tempdir_for_test();
-        let ctx = ctx(&dir);
-        let launcher_root = dir.path.join("launchers");
-        test_env::set_var("VBOX_LAUNCHER_DIR", &launcher_root);
-        test_env::set_var(
-            "VBOX_CLIENT_BIN",
-            ctx.root.join("target/release/vbox-client"),
-        );
-
-        let row = AppRecord {
-            id: "org.example.App".to_string(),
-            name: "Example".to_string(),
-            exec: "example --flag".to_string(),
-            icon: "org.example.App".to_string(),
-            argv_b64: "YXJndg==".to_string(),
-            argv: vec![OsString::from("example")],
-        };
-        let app = build_launcher_app(&ctx, &row).unwrap();
-        assert!(app.join("Contents/Info.plist").is_file());
-        assert_eq!(
-            fs::read_to_string(app.join("Contents/Resources/AppID.txt")).unwrap(),
-            "org.example.App\n"
-        );
-        assert_eq!(
-            fs::read_to_string(app.join("Contents/Resources/Instance.txt")).unwrap(),
-            "org-example-App\n"
-        );
-        assert_eq!(
-            fs::read_to_string(app.join("Contents/Resources/Port.txt")).unwrap(),
-            "5712\n"
-        );
-        remove_launcher_app(&row).unwrap();
-        assert!(!app.exists());
-        test_env::remove_var("VBOX_LAUNCHER_DIR");
-        test_env::remove_var("VBOX_CLIENT_BIN");
-    }
-
-    #[test]
-    fn suffix_writes_reads_and_clears_state_file() {
-        let dir = tempdir_for_test();
-        let ctx = ctx(&dir);
-        suffix(
-            &ctx,
-            SuffixArgs {
-                clear: false,
-                value: vec![OsString::from("Guest"), OsString::from("Apps")],
-            },
-        )
-        .unwrap();
-        assert_eq!(
-            fs::read_to_string(ctx.state_dir.join("launcher-suffix.txt")).unwrap(),
-            "Guest Apps\n"
-        );
-        suffix(
-            &ctx,
-            SuffixArgs {
-                clear: true,
-                value: Vec::new(),
-            },
-        )
-        .unwrap();
-        assert!(!ctx.state_dir.join("launcher-suffix.txt").exists());
-    }
-
-    #[test]
-    fn logs_reads_recent_local_logs_without_following() {
-        let dir = tempdir_for_test();
-        let ctx = ctx(&dir);
-        let log_dir = log_dir(&ctx);
-        fs::create_dir_all(&log_dir).unwrap();
-        fs::write(log_dir.join("client.log"), "plain\nkeyboard event\n").unwrap();
-        logs(
-            &ctx,
-            LogsArgs {
-                follow: false,
-                mode: None,
-            },
-        )
-        .unwrap();
-    }
-
-    #[test]
-    fn debug_bundle_serializes_context_even_when_guest_is_missing() {
-        let dir = tempdir_for_test();
-        let mut ctx = ctx(&dir);
-        ctx.guest = None;
-        ctx.guest_dir = None;
-        debug_bundle(&ctx).unwrap();
-        let text = fs::read_to_string(ctx.state_dir.join("debug-bundle.txt")).unwrap();
-        assert!(text.contains("guest=<unset>"));
-        assert!(text.contains("guest_dir=<unset>"));
-    }
 }
 
 const APP_LIBRARY_PY: &str = r#"
@@ -2118,3 +1838,284 @@ for directory in app_dirs:
         ext = path.suffix.lower().lstrip(".") or "bin"
         print(f"{app_id}\t{ext}\t{base64.b64encode(data).decode()}")
 "#;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::context::AppContext;
+    use crate::test_env;
+    use crate::{LogsArgs, SuffixArgs};
+
+    struct TempDir {
+        path: PathBuf,
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
+
+    fn tempdir_for_test() -> TempDir {
+        let path = std::env::temp_dir().join(format!(
+            "vbox-runtime-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&path).unwrap();
+        TempDir { path }
+    }
+
+    fn ctx(dir: &TempDir) -> AppContext {
+        let client_bin = dir.path.join("target/release/vbox-client");
+        fs::create_dir_all(client_bin.parent().unwrap()).unwrap();
+        fs::write(&client_bin, b"fake client").unwrap();
+        AppContext {
+            root: dir.path.clone(),
+            state_dir: dir.path.join(".vbox"),
+            cli_path: dir.path.join("target/release/vbox"),
+            guest: Some("alice@example.test".to_string()),
+            guest_dir: Some(PathBuf::from("/home/alice/vbox")),
+            instance: "default".to_string(),
+            port: 5710,
+            socket: "vbox-0".to_string(),
+            width: 1024,
+            height: 768,
+            debug: false,
+            build: false,
+        }
+    }
+
+    #[test]
+    fn default_app_args_supplies_calculator_only_for_empty_args() {
+        assert_eq!(
+            default_app_args(Vec::new()),
+            vec![OsString::from("gnome-calculator")]
+        );
+        assert_eq!(
+            default_app_args(vec![OsString::from("gedit")]),
+            vec![OsString::from("gedit")]
+        );
+    }
+
+    #[test]
+    fn runtime_dirs_are_instance_scoped() {
+        let dir = tempdir_for_test();
+        let mut ctx = ctx(&dir);
+        ctx.instance = "dev".to_string();
+        assert_eq!(run_dir(&ctx), ctx.state_dir.join("run/dev"));
+        assert_eq!(log_dir(&ctx), ctx.state_dir.join("logs/dev"));
+        assert_eq!(app_cache(&ctx), ctx.state_dir.join("app-library.tsv"));
+    }
+
+    #[test]
+    fn read_app_cache_skips_short_rows_and_decodes_argv() {
+        let dir = tempdir_for_test();
+        let ctx = ctx(&dir);
+        fs::create_dir_all(&ctx.state_dir).unwrap();
+        let argv = serde_json::to_vec(&vec!["/usr/bin/app", "--flag"]).unwrap();
+        let encoded = base64::engine::general_purpose::STANDARD.encode(argv);
+        fs::write(
+            app_cache(&ctx),
+            format!(
+                "too\tshort\norg.app\tApp\t/usr/bin/app\ticon\t/app.desktop\tUtility\t{encoded}\norg.bad\tBad\tbad\ticon\tbad.desktop\tUtility\tnot-base64\n"
+            ),
+        )
+        .unwrap();
+
+        let rows = read_app_cache(&ctx).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(
+            rows[0].argv,
+            vec![OsString::from("/usr/bin/app"), OsString::from("--flag")]
+        );
+        assert_eq!(rows[1].argv, vec![OsString::from("bad")]);
+    }
+
+    #[test]
+    fn selected_matches_empty_filters_or_case_insensitive_substrings() {
+        assert!(selected("org.gnome.Calculator", "Calculator", &[]));
+        assert!(selected(
+            "org.gnome.Calculator",
+            "Calculator",
+            &["calc".to_string()]
+        ));
+        assert!(!selected(
+            "org.gnome.Calculator",
+            "Calculator",
+            &["terminal".to_string()]
+        ));
+    }
+
+    #[test]
+    fn decode_argv_b64_rejects_invalid_payloads() {
+        let argv = serde_json::to_vec(&vec!["app", "--verbose"]).unwrap();
+        let encoded = base64::engine::general_purpose::STANDARD.encode(argv);
+        assert_eq!(
+            decode_argv_b64(&encoded).unwrap(),
+            vec![OsString::from("app"), OsString::from("--verbose")]
+        );
+        assert!(decode_argv_b64("not base64").is_none());
+    }
+
+    #[test]
+    fn instance_context_resets_socket_for_default_and_sanitizes_named_instances() {
+        let dir = tempdir_for_test();
+        let ctx = ctx(&dir);
+        let default = instance_context(&ctx, "default").unwrap();
+        assert_eq!(default.socket, "vbox-0");
+        assert_eq!(default.port, 5710);
+        let named = instance_context(&ctx, "dev box!!west").unwrap();
+        assert_eq!(named.instance, "dev box!!west");
+        assert_eq!(named.socket, "vbox-dev-box--west");
+        assert_eq!(named.port, 5712);
+    }
+
+    #[test]
+    fn instance_context_reuses_stable_distinct_ports_for_named_instances() {
+        let dir = tempdir_for_test();
+        let ctx = ctx(&dir);
+
+        let calc = instance_context(&ctx, "org-gnome-Calculator").unwrap();
+        let maps = instance_context(&ctx, "org-gnome-Maps").unwrap();
+        let calc_again = instance_context(&ctx, "org-gnome-Calculator").unwrap();
+
+        assert_eq!(calc.port, 5712);
+        assert_eq!(maps.port, 5713);
+        assert_eq!(calc_again.port, calc.port);
+        assert_eq!(
+            fs::read_to_string(ctx.state_dir.join(INSTANCE_PORT_ALLOC_FILE)).unwrap(),
+            "org-gnome-Calculator\t5712\norg-gnome-Maps\t5713\n"
+        );
+    }
+
+    #[test]
+    fn shell_quote_and_plist_escape_cover_special_characters() {
+        assert_eq!(shell_quote(OsStr::new("a'b")), "'a'\\''b'");
+        assert_eq!(plist_escape("A&B<C>"), "A&amp;B&lt;C&gt;");
+    }
+
+    #[test]
+    fn launcher_paths_apply_suffix_and_safe_filename() {
+        let _guard = test_env::lock();
+        let dir = tempdir_for_test();
+        test_env::set_var("VBOX_LAUNCHER_DIR", dir.path.join("apps"));
+        test_env::set_var("VBOX_LAUNCHER_SUFFIX", "Guest");
+        let row = AppRecord {
+            id: "org.example.App".to_string(),
+            name: "Example/App: Editor ".to_string(),
+            exec: "example".to_string(),
+            icon: "org.example.App".to_string(),
+            argv_b64: String::new(),
+            argv: vec![OsString::from("example")],
+        };
+        assert_eq!(launcher_display_name("Files"), "Files (Guest)");
+        assert_eq!(safe_app_filename(" Example/App: "), "Example-App-");
+        assert_eq!(
+            launcher_app_path(&row),
+            dir.path.join("apps/Example-App- Editor  (Guest).app")
+        );
+        test_env::remove_var("VBOX_LAUNCHER_DIR");
+        test_env::remove_var("VBOX_LAUNCHER_SUFFIX");
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn build_and_remove_launcher_app_create_expected_bundle_files() {
+        let _guard = test_env::lock();
+        let dir = tempdir_for_test();
+        let ctx = ctx(&dir);
+        let launcher_root = dir.path.join("launchers");
+        test_env::set_var("VBOX_LAUNCHER_DIR", &launcher_root);
+        test_env::set_var(
+            "VBOX_CLIENT_BIN",
+            ctx.root.join("target/release/vbox-client"),
+        );
+
+        let row = AppRecord {
+            id: "org.example.App".to_string(),
+            name: "Example".to_string(),
+            exec: "example --flag".to_string(),
+            icon: "org.example.App".to_string(),
+            argv_b64: "YXJndg==".to_string(),
+            argv: vec![OsString::from("example")],
+        };
+        let app = build_launcher_app(&ctx, &row).unwrap();
+        assert!(app.join("Contents/Info.plist").is_file());
+        assert_eq!(
+            fs::read_to_string(app.join("Contents/Resources/AppID.txt")).unwrap(),
+            "org.example.App\n"
+        );
+        assert_eq!(
+            fs::read_to_string(app.join("Contents/Resources/Instance.txt")).unwrap(),
+            "org-example-App\n"
+        );
+        assert_eq!(
+            fs::read_to_string(app.join("Contents/Resources/Port.txt")).unwrap(),
+            "5712\n"
+        );
+        remove_launcher_app(&row).unwrap();
+        assert!(!app.exists());
+        test_env::remove_var("VBOX_LAUNCHER_DIR");
+        test_env::remove_var("VBOX_CLIENT_BIN");
+    }
+
+    #[test]
+    fn suffix_writes_reads_and_clears_state_file() {
+        let dir = tempdir_for_test();
+        let ctx = ctx(&dir);
+        suffix(
+            &ctx,
+            SuffixArgs {
+                clear: false,
+                value: vec![OsString::from("Guest"), OsString::from("Apps")],
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            fs::read_to_string(ctx.state_dir.join("launcher-suffix.txt")).unwrap(),
+            "Guest Apps\n"
+        );
+        suffix(
+            &ctx,
+            SuffixArgs {
+                clear: true,
+                value: Vec::new(),
+            },
+        )
+        .unwrap();
+        assert!(!ctx.state_dir.join("launcher-suffix.txt").exists());
+    }
+
+    #[test]
+    fn logs_reads_recent_local_logs_without_following() {
+        let dir = tempdir_for_test();
+        let ctx = ctx(&dir);
+        let log_dir = log_dir(&ctx);
+        fs::create_dir_all(&log_dir).unwrap();
+        fs::write(log_dir.join("client.log"), "plain\nkeyboard event\n").unwrap();
+        logs(
+            &ctx,
+            LogsArgs {
+                follow: false,
+                mode: None,
+            },
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn debug_bundle_serializes_context_even_when_guest_is_missing() {
+        let dir = tempdir_for_test();
+        let mut ctx = ctx(&dir);
+        ctx.guest = None;
+        ctx.guest_dir = None;
+        debug_bundle(&ctx).unwrap();
+        let text = fs::read_to_string(ctx.state_dir.join("debug-bundle.txt")).unwrap();
+        assert!(text.contains("guest=<unset>"));
+        assert!(text.contains("guest_dir=<unset>"));
+    }
+}

@@ -1465,6 +1465,7 @@ fn window_title(title: &str) -> &str {
 /// `flush_due_remote_resizes` so the test pins the partition without
 /// holding a winit event loop.
 #[allow(dead_code)] // exercised by tests; production inlines retain()
+#[allow(clippy::type_complexity)]
 fn partition_pending_resizes(
     pending: &[(u64, PendingRemoteResize)],
     now: Instant,
@@ -2447,13 +2448,13 @@ impl ViewerApp {
         }
 
         if keyboard_command_modifiers {
-            if self.debug {
-                if let Some(text) = event.text.as_deref().filter(|text| !text.is_empty()) {
-                    eprintln!(
-                        "debug: suppress shortcut text chars={}",
-                        text.chars().count()
-                    );
-                }
+            if self.debug
+                && let Some(text) = event.text.as_deref().filter(|text| !text.is_empty())
+            {
+                eprintln!(
+                    "debug: suppress shortcut text chars={}",
+                    text.chars().count()
+                );
             }
             return;
         }
@@ -2649,7 +2650,7 @@ impl ViewerApp {
     fn composer_is_empty(&self, id: u64) -> bool {
         self.windows
             .get(&id)
-            .map_or(true, |view| view.composer.is_empty())
+            .is_none_or(|view| view.composer.is_empty())
     }
 
     fn composer_backspace(&mut self, id: u64) -> Vec<ComposerAction> {

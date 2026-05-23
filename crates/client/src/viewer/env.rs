@@ -49,7 +49,7 @@ fn parse_menubar_inset(value: Option<&str>) -> f64 {
 }
 
 pub(crate) fn should_log_count(count: u64) -> bool {
-    count <= 5 || count % 60 == 0
+    count <= 5 || count.is_multiple_of(60)
 }
 
 /// Environment variable that toggles the macOS host chrome (titlebar +
@@ -65,10 +65,10 @@ pub(crate) const HOST_CHROME_ENV: &str = "VBOX_HOST_CHROME";
 /// turn it off and fall back to the old borderless layout, useful for
 /// apps whose own header bar clashes with a host titlebar.
 pub(crate) fn host_chrome_enabled() -> bool {
-    match crate::brand::env_var(HOST_CHROME_ENV).as_deref() {
-        Some("0" | "false" | "FALSE" | "no" | "off") => false,
-        _ => true,
-    }
+    !matches!(
+        crate::brand::env_var(HOST_CHROME_ENV).as_deref(),
+        Some("0" | "false" | "FALSE" | "no" | "off")
+    )
 }
 
 /// Apps known to ship a non-standard / heavy GTK or CSD chrome (header bar,
@@ -85,10 +85,7 @@ pub(crate) fn host_chrome_enabled() -> bool {
 /// initial window title, both lowercased. Order is significant only
 /// because the first match wins for the hint message.
 pub(crate) fn guest_app_uses_own_chrome(app_id: &str, title: &str) -> Option<&'static str> {
-    let needle_app = app_id
-        .to_ascii_lowercase()
-        .replace('.', "-")
-        .replace('_', "-");
+    let needle_app = app_id.to_ascii_lowercase().replace(['.', '_'], "-");
     let needle_title = title.to_ascii_lowercase();
     const KNOWN: &[(&str, &str)] = &[
         ("firefox", "Firefox"),

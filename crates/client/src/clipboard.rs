@@ -95,17 +95,17 @@ pub(crate) fn start(outbound: mpsc::Sender<Clipboard>) -> Option<mpsc::Sender<Cl
                     );
                     continue;
                 }
-                if let Some(existing) = last_sent_for_writer.lock().ok().and_then(|g| g.clone()) {
-                    if existing == payload.text {
-                        // Our own outbound was echoed back. Don't reinstall
-                        // — that would only retrigger our poll watcher.
-                        clip_trace!(
-                            "client.installer drop=echo serial={} bytes={}",
-                            payload.serial,
-                            payload.text.len()
-                        );
-                        continue;
-                    }
+                if let Some(existing) = last_sent_for_writer.lock().ok().and_then(|g| g.clone())
+                    && existing == payload.text
+                {
+                    // Our own outbound was echoed back. Don't reinstall
+                    // — that would only retrigger our poll watcher.
+                    clip_trace!(
+                        "client.installer drop=echo serial={} bytes={}",
+                        payload.serial,
+                        payload.text.len()
+                    );
+                    continue;
                 }
                 clip_trace!(
                     "client.installer install serial={} chars={}",

@@ -1,8 +1,8 @@
 use anyhow::{Result, bail};
 use serde_json::{Map, Value};
 
-use super::{MachineRecord, load_overrides, save_overrides};
 use super::kind::MachineKind;
+use super::{MachineRecord, load_overrides, save_overrides};
 use crate::context::AppContext;
 use crate::{keychain, remote};
 

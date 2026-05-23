@@ -12,9 +12,7 @@ pub(crate) enum MachineKind<'a> {
 impl<'a> MachineKind<'a> {
     pub(crate) fn from_record(record: &'a MachineRecord) -> Self {
         if record.uuid.starts_with("remote:") {
-            Self::Remote {
-                name: &record.name,
-            }
+            Self::Remote { name: &record.name }
         } else {
             Self::Parallels { uuid: &record.uuid }
         }

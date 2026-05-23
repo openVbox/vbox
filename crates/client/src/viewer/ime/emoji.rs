@@ -82,16 +82,15 @@ pub fn split_clusters(text: &str) -> Vec<String> {
             continue;
         }
 
-        if let Some(prev) = current.chars().last() {
-            if is_regional_indicator(prev)
-                && is_regional_indicator(ch)
-                && cluster_flag_open(&current)
-            {
-                // Pair the second half of a regional-indicator flag onto the
-                // first half so 🇰🇷 stays one cluster.
-                current.push(ch);
-                continue;
-            }
+        if let Some(prev) = current.chars().last()
+            && is_regional_indicator(prev)
+            && is_regional_indicator(ch)
+            && cluster_flag_open(&current)
+        {
+            // Pair the second half of a regional-indicator flag onto the
+            // first half so 🇰🇷 stays one cluster.
+            current.push(ch);
+            continue;
         }
 
         if !current.is_empty() {

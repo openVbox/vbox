@@ -36,7 +36,7 @@ impl SshOptions {
         }
     }
 
-    fn to_shell_string(self, program: &str) -> String {
+    fn to_shell_string(&self, program: &str) -> String {
         let env_prefix = if self.env.is_empty() {
             String::new()
         } else {
@@ -72,9 +72,9 @@ impl SshCreds {
             _ => match machines::find_by_ssh_target(ctx, guest).ok().flatten() {
                 Some(row) if !row.identity_file.is_empty() || row.has_password => Self {
                     identity_file: option_path(&row.identity_file),
-                    keychain_account: row.has_password.then(|| {
-                        machines::MachineKind::from_record(&row).keychain_account()
-                    }),
+                    keychain_account: row
+                        .has_password
+                        .then(|| machines::MachineKind::from_record(&row).keychain_account()),
                 },
                 _ => Self::default(),
             },
@@ -88,9 +88,7 @@ impl SshCreds {
             opts.flags
                 .push(("-o", OsString::from("IdentitiesOnly=yes")));
         }
-        if let (Some(account), Some(helper)) =
-            (self.keychain_account.as_deref(), askpass_helper)
-        {
+        if let (Some(account), Some(helper)) = (self.keychain_account.as_deref(), askpass_helper) {
             opts.env.push(("SSH_ASKPASS", helper.to_owned()));
             opts.env
                 .push(("SSH_ASKPASS_REQUIRE", OsString::from("force")));
@@ -101,9 +99,7 @@ impl SshCreds {
             }
             opts.flags.push((
                 "-o",
-                OsString::from(
-                    "PreferredAuthentications=password,keyboard-interactive,publickey",
-                ),
+                OsString::from("PreferredAuthentications=password,keyboard-interactive,publickey"),
             ));
             opts.flags
                 .push(("-o", OsString::from("NumberOfPasswordPrompts=1")));
@@ -163,7 +159,9 @@ fn apply_creds(ctx: &AppContext, cmd: &mut Command) {
 pub(crate) fn inline_ssh(ctx: &AppContext) -> String {
     let creds = SshCreds::from_context(ctx);
     let helper = askpass_helper(ctx, &creds);
-    creds.build_options(helper.as_deref()).to_shell_string("ssh")
+    creds
+        .build_options(helper.as_deref())
+        .to_shell_string("ssh")
 }
 
 fn shell_quote(value: &OsStr) -> String {
