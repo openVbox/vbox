@@ -2023,6 +2023,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "macos")]
     fn build_and_remove_launcher_app_create_expected_bundle_files() {
         let _guard = test_env::lock();
         let dir = tempdir_for_test();
