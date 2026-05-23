@@ -13,6 +13,8 @@ use crate::{MachineListArgs, MachineStatus, MachinesArgs, MachinesCommand};
 
 mod kind;
 mod password;
+mod probe;
+mod view;
 
 pub(crate) use kind::MachineKind;
 
@@ -33,10 +35,24 @@ pub(crate) struct MachineRecord {
     pub(crate) has_password: bool,
 }
 
+/// Output of `vbox machines info`. Holds the canonical record plus any
+/// override keys that aren't already exposed as fields on the record
+/// (notes/port/socket/etc), so the user sees their customizations in
+/// one place. With `--probe`, also includes a live reachability /
+/// uptime snapshot — kept Optional so the static path stays cheap.
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct MachineInfo {
+    pub(crate) record: MachineRecord,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub(crate) overrides: BTreeMap<String, Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) probe: Option<probe::ProbeReport>,
+}
+
 pub(crate) fn run(ctx: &AppContext, args: MachinesArgs) -> Result<()> {
     match args.command {
         Some(MachinesCommand::List(list)) => list_cmd(ctx, list),
-        Some(MachinesCommand::Info { target }) => info_cmd(ctx, &target),
+        Some(MachinesCommand::Info(args)) => info_cmd(ctx, &args.target, args.json, args.probe),
         Some(MachinesCommand::Start { target }) => control_cmd(ctx, &target, "start"),
         Some(MachinesCommand::Stop { target }) => control_cmd(ctx, &target, "stop"),
         Some(MachinesCommand::Delete(args)) => delete_cmd(ctx, &args.target),
@@ -89,17 +105,59 @@ fn list_cmd(ctx: &AppContext, args: MachineListArgs) -> Result<()> {
     Ok(())
 }
 
-fn info_cmd(ctx: &AppContext, target: &str) -> Result<()> {
-    let row = find_one(ctx, target)?;
-    println!("uuid:      {}", row.uuid);
-    println!("name:      {}", row.name);
-    println!("status:    {}", row.status);
-    println!("ip:        {}", row.ip);
-    println!("os:        {} ({})", row.os_raw, row.os_kind);
-    println!("ssh_user:  {}", row.ssh_user);
-    println!("ssh_host:  {}", row.ssh_host);
-    println!("guest_dir: {}", row.guest_dir);
+fn info_cmd(ctx: &AppContext, target: &str, as_json: bool, with_probe: bool) -> Result<()> {
+    let info = load_info(ctx, target, with_probe)?;
+    if as_json {
+        println!("{}", view::render_json(&info)?);
+    } else {
+        print!("{}", view::render_text(&info));
+    }
     Ok(())
+}
+
+pub(crate) fn load_info(
+    ctx: &AppContext,
+    target: &str,
+    with_probe: bool,
+) -> Result<MachineInfo> {
+    let record = find_one(ctx, target)?;
+    let overrides = collect_extra_overrides(ctx, &record)?;
+    let probe = if with_probe {
+        Some(probe::probe(&record))
+    } else {
+        None
+    };
+    Ok(MachineInfo {
+        record,
+        overrides,
+        probe,
+    })
+}
+
+/// Override keys that are already projected onto `MachineRecord`. These
+/// stay out of the `overrides` map so we don't show the same value
+/// twice in the rendered output.
+const RECORD_PROJECTED_KEYS: &[&str] = &[
+    "ssh_user",
+    "ssh_host",
+    "guest_dir",
+    "identity_file",
+    "has_password",
+];
+
+fn collect_extra_overrides(
+    ctx: &AppContext,
+    record: &MachineRecord,
+) -> Result<BTreeMap<String, Value>> {
+    let all = load_overrides(ctx)?;
+    let Some(map) = all.get(&record.uuid).and_then(Value::as_object) else {
+        return Ok(BTreeMap::new());
+    };
+    Ok(map
+        .iter()
+        .filter(|(key, _)| !RECORD_PROJECTED_KEYS.contains(&key.as_str()))
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect())
 }
 
 fn control_cmd(ctx: &AppContext, target: &str, action: &str) -> Result<()> {

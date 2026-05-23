@@ -289,9 +289,7 @@ struct MachinesArgs {
 #[command(rename_all = "kebab-case")]
 enum MachinesCommand {
     List(MachineListArgs),
-    Info {
-        target: String,
-    },
+    Info(MachineInfoArgs),
     Start {
         target: String,
     },
@@ -348,6 +346,16 @@ struct MachineDeleteArgs {
     target: String,
     #[arg(long, short = 'y', required = true)]
     yes: bool,
+}
+
+#[derive(Args, Debug)]
+struct MachineInfoArgs {
+    target: String,
+    #[arg(long)]
+    json: bool,
+    /// Include a live SSH reachability + uptime snapshot. May take a few seconds.
+    #[arg(long)]
+    probe: bool,
 }
 
 #[derive(Args, Debug)]

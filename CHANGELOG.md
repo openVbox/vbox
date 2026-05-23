@@ -125,6 +125,38 @@ under `[Unreleased]`.
   with a language switcher.
 - Localhost ping RTT ≈ 0.1 ms.
 
+#### Machines & remote hosts
+- `vbox machines info <target> --json` emits machine metadata plus any
+  user-set `overrides` as JSON; `--probe` adds a live SSH reachability
+  snapshot (`reachable` / `rtt_ms` / `uptime` / last `error`) so the
+  Swift GUI can render the probe section without a separate RPC.
+- Swift `MachineInfoSheet` shows static Identity / SSH / Guest-path /
+  Custom-overrides sections immediately and lazily probes on demand
+  (`Run probe` / `Re-probe`) with a 5-minute in-memory `ProbeCache`
+  scoped per machine UUID.
+- Remote SSH hosts (`vbox remote add`) and Parallels machines can now
+  carry a private-key path (`--identity-file`) and a password stored
+  in the macOS Keychain (`--password-stdin` on add; `vbox machines set
+  <target> password <pw>` / `unset password` after). A hidden
+  `vbox _askpass` subcommand serves the password to ssh through
+  `SSH_ASKPASS`, so neither disk nor command line ever sees plaintext.
+- New `ssh` and `keychain` CLI modules centralize ssh/scp construction
+  through a single `SshOptions` IR — identity flag + askpass env are
+  decided in one place and applied to both `Command` builders and
+  inline-shell `ssh ...` strings.
+- `machines/` split into `mod.rs` + `kind.rs` (`MachineKind` enum for
+  Parallels vs Remote) + `password.rs` + `view.rs` + `probe.rs`, so the
+  remote/parallels branch lives in one match and future machine kinds
+  plug into the same set/clear/probe flow.
+- AddRemoteSheet / MachineConfigSheet expose an identity-file picker
+  and password fields with "Saved in Keychain" / "Clear" affordances.
+  Shared form rows live in `MachineFormRows.swift` so both sheets
+  stay consistent.
+- New L10n keys translated to en / ko / zh / ja: SSH identity browse,
+  password placeholder / hint / current / clear / change placeholder,
+  Machine info, Identity / Custom overrides / Probe sections, Run /
+  Re-probe / Probing / Reachable / Unreachable.
+
 ### Fixed
 - `vbox controld-install` used to hard-code `$guest_dir/target/release/`
   for the systemd `ExecStart`, which meant prebuilt-tarball
@@ -141,6 +173,13 @@ under `[Unreleased]`.
 - README architecture diagram corrected: `vbox-controld` lives inside
   the Linux guest (not between host and guest), and the data plane has
   no TLS path (only QUIC or ssh-tunnelled TCP).
+- Viewer no longer leaves the old larger frame visible behind
+  transparent CSD/shadow pixels when the remote display shrinks:
+  shrink replaces the buffer with transparent fill instead of
+  preserving stale pixels.
+- `scripts/build-mac-app.sh` now globs every `*.swift` under the
+  source directory; the previous single-file invocation silently
+  broke as soon as the Swift target was split into multiple files.
 
 ### Pending
 - mTLS / authenticated transport for the data plane — still rides
