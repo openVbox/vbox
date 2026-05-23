@@ -16,20 +16,78 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  ubuntu:
-    name: build (ubuntu / linux server + cli)
-    runs-on: ubuntu-latest
+  linux-gnu:
+    name: build (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runs_on: ubuntu-latest
+            target:  x86_64-unknown-linux-gnu
+          - runs_on: ubuntu-24.04-arm
+            target:  aarch64-unknown-linux-gnu
+    runs-on: ${{ matrix.runs_on }}
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-rust
         with:
-          cache-key: build-ubuntu
+          cache-key: build-${{ matrix.target }}
+      - name: rustup target add ${{ matrix.target }}
+        run: rustup target add ${{ matrix.target }}
       - name: cargo build (vbox-server + vbox-controld + vbox-cli)
         run: |
-          cargo build --locked \
+          cargo build --locked --target ${{ matrix.target }} \
             -p vbox-server \
             -p vbox-controld \
             -p vbox-cli
+
+  linux-musl:
+    name: build (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runs_on: ubuntu-latest
+            target:  x86_64-unknown-linux-musl
+          - runs_on: ubuntu-24.04-arm
+            target:  aarch64-unknown-linux-musl
+    runs-on: ${{ matrix.runs_on }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-build-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            cargo-build-${{ matrix.target }}-
+      - name: cargo build in Alpine (musl)
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.cargo/registry" "$HOME/.cargo/git"
+          docker run --rm \
+            -e CARGO_HOME=/cargo \
+            -e CARGO_TARGET_DIR=/work/target \
+            -e HOST_UID="$(id -u)" \
+            -e HOST_GID="$(id -g)" \
+            -e TARGET="$TARGET" \
+            -v "$PWD":/work \
+            -v "$HOME/.cargo/registry":/cargo/registry \
+            -v "$HOME/.cargo/git":/cargo/git \
+            -w /work \
+            rust:1-alpine \
+            sh -c '
+              set -eu
+              export PATH="/usr/local/cargo/bin:$PATH"
+              apk add --no-cache build-base cmake git libxkbcommon-dev libxkbcommon-static perl pkgconf wayland-dev
+              cargo --version
+              cargo build --locked --target "$TARGET" -p vbox-server -p vbox-controld
+              chown -R "$HOST_UID:$HOST_GID" /work/target /cargo
+            '
 
   macos:
     name: build (macos / cli + vbox.app)
@@ -46,4 +104,6 @@ jobs:
           set -euo pipefail
           mkdir -p dist/stage/bin
           cp target/debug/vbox dist/stage/bin/
+          VERSION="$(grep -E '^version' Cargo.toml | head -1 | sed -E 's/.*"([^"]+)".*/\1/')"
+          export VERSION
           OUT="$PWD/dist/stage" ./scripts/build-mac-app.sh

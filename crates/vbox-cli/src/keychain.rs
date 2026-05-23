@@ -47,14 +47,7 @@ pub(crate) fn set_password(account: &str, password: &str) -> Result<()> {
 #[cfg(target_os = "macos")]
 pub(crate) fn get_password(account: &str) -> Result<Option<String>> {
     let output = Command::new("security")
-        .args([
-            "find-generic-password",
-            "-s",
-            SERVICE,
-            "-a",
-            account,
-            "-w",
-        ])
+        .args(["find-generic-password", "-s", SERVICE, "-a", account, "-w"])
         .output()
         .context("spawn `security find-generic-password`")?;
     if !output.status.success() {
@@ -70,13 +63,7 @@ pub(crate) fn get_password(account: &str) -> Result<Option<String>> {
 #[cfg(target_os = "macos")]
 pub(crate) fn delete_password(account: &str) -> Result<()> {
     let status = Command::new("security")
-        .args([
-            "delete-generic-password",
-            "-s",
-            SERVICE,
-            "-a",
-            account,
-        ])
+        .args(["delete-generic-password", "-s", SERVICE, "-a", account])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
