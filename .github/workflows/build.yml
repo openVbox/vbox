@@ -1,0 +1,49 @@
+name: build
+
+on:
+  push:
+    branches:
+      - '**'
+    tags-ignore:
+      - '*'
+  pull_request:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  ubuntu:
+    name: build (ubuntu / linux server + cli)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-rust
+        with:
+          cache-key: build-ubuntu
+      - name: cargo build (vbox-server + vbox-controld + vbox-cli)
+        run: |
+          cargo build --locked \
+            -p vbox-server \
+            -p vbox-controld \
+            -p vbox-cli
+
+  macos:
+    name: build (macos / cli + vbox.app)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-rust
+        with:
+          cache-key: build-macos
+      - name: cargo build vbox-cli
+        run: cargo build --locked -p vbox-cli
+      - name: Build vbox.app launcher
+        run: |
+          set -euo pipefail
+          mkdir -p dist/stage/bin
+          cp target/debug/vbox dist/stage/bin/
+          OUT="$PWD/dist/stage" ./scripts/build-mac-app.sh

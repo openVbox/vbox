@@ -1,0 +1,51 @@
+name: Setup Rust
+description: |
+  Install the stable Rust toolchain (optionally with extra components),
+  install Linux system deps that the workspace needs (libxkbcommon-dev,
+  pkg-config, build-essential) when the runner is Linux, and cache cargo
+  registry / git / target between runs.
+
+inputs:
+  components:
+    description: Extra rustup components, space-separated (e.g. "rustfmt clippy").
+    required: false
+    default: ''
+  cache-key:
+    description: Extra fragment baked into the cache key (e.g. "lint" / "build").
+    required: false
+    default: 'default'
+
+runs:
+  using: composite
+  steps:
+    - name: Install Linux system deps
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          build-essential pkg-config libxkbcommon-dev
+
+    - name: Install Rust toolchain
+      shell: bash
+      env:
+        COMPONENTS: ${{ inputs.components }}
+      run: |
+        set -euo pipefail
+        args="--profile minimal"
+        for c in $COMPONENTS; do
+          args="$args --component $c"
+        done
+        rustup toolchain install stable $args
+        rustup default stable
+
+    - name: Cache cargo registry / git / target
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: cargo-${{ inputs.cache-key }}-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          cargo-${{ inputs.cache-key }}-${{ runner.os }}-
