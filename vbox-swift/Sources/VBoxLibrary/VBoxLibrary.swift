@@ -160,6 +160,16 @@ enum L10n {
         "Field password current": "Saved in Keychain",
         "Field password clear": "Clear",
         "Field password change placeholder": "Leave blank to keep existing",
+        "Machine info": "Machine info",
+        "Identity section": "Identity",
+        "Custom overrides section": "Custom overrides",
+        "Failed to load info": "Couldn't load machine info",
+        "Probe section": "Connection probe",
+        "Run probe": "Run probe",
+        "Re-probe": "Re-probe",
+        "Probing": "Probing…",
+        "Reachable": "Reachable",
+        "Unreachable": "Unreachable",
         "Guest path section": "Guest path",
         "Field guestdir": "Workspace directory",
         "Field guestdir placeholder": "e.g. /home/ubuntu/vbox",
@@ -323,6 +333,16 @@ enum L10n {
         "Field password current": "키체인에 저장됨",
         "Field password clear": "삭제",
         "Field password change placeholder": "비워두면 기존 값 유지",
+        "Machine info": "머신 정보",
+        "Identity section": "식별",
+        "Custom overrides section": "사용자 설정",
+        "Failed to load info": "정보를 불러오지 못했습니다",
+        "Probe section": "연결 점검",
+        "Run probe": "점검 실행",
+        "Re-probe": "다시 점검",
+        "Probing": "점검 중…",
+        "Reachable": "도달 가능",
+        "Unreachable": "도달 불가",
         "Guest path section": "게스트 경로",
         "Field guestdir": "작업 디렉터리",
         "Field guestdir placeholder": "예: /home/ubuntu/vbox",
@@ -482,6 +502,16 @@ enum L10n {
         "Field password current": "已保存在钥匙串",
         "Field password clear": "清除",
         "Field password change placeholder": "留空保留现有值",
+        "Machine info": "机器信息",
+        "Identity section": "标识",
+        "Custom overrides section": "自定义覆盖",
+        "Failed to load info": "无法加载机器信息",
+        "Probe section": "连接探测",
+        "Run probe": "运行探测",
+        "Re-probe": "重新探测",
+        "Probing": "探测中…",
+        "Reachable": "可达",
+        "Unreachable": "不可达",
         "Guest path section": "客户机路径",
         "Field guestdir": "工作目录",
         "Field guestdir placeholder": "例如: /home/ubuntu/vbox",
@@ -641,6 +671,16 @@ enum L10n {
         "Field password current": "キーチェーンに保存済み",
         "Field password clear": "クリア",
         "Field password change placeholder": "空欄のままで既存の値を維持",
+        "Machine info": "マシン情報",
+        "Identity section": "識別情報",
+        "Custom overrides section": "カスタム設定",
+        "Failed to load info": "情報の読み込みに失敗しました",
+        "Probe section": "接続診断",
+        "Run probe": "診断を実行",
+        "Re-probe": "再診断",
+        "Probing": "診断中…",
+        "Reachable": "到達可能",
+        "Unreachable": "到達不可",
         "Guest path section": "ゲストパス",
         "Field guestdir": "作業ディレクトリ",
         "Field guestdir placeholder": "例: /home/ubuntu/vbox",
@@ -1195,6 +1235,7 @@ struct LibraryWindow: View {
     @State private var showSettings = false
     // 머신 설정 sheet 의 nested-sheet 제약 회피 — machines sheet 닫고 띄움.
     @State private var configMachine: GuestMachine? = nil
+    @State private var infoMachine: GuestMachine? = nil
     @State private var showAddRemoteAtRoot = false
     @AppStorage(VBoxDefaults.hostChromeKey) private var hostChromeEnabled: Bool = true
 
@@ -1284,10 +1325,17 @@ struct LibraryWindow: View {
                 onAddRemoteRequest: {
                     showMachines = false
                     showAddRemoteAtRoot = true
+                },
+                onInfoRequest: { machine in
+                    showMachines = false
+                    infoMachine = machine
                 })
         }
         .sheet(item: $configMachine) { machine in
             MachineConfigSheet(machine: machine, model: machinesModel)
+        }
+        .sheet(item: $infoMachine) { machine in
+            MachineInfoSheet(machine: machine, model: machinesModel)
         }
         .sheet(isPresented: $showAddRemoteAtRoot) {
             AddRemoteSheet { name, ssh, dir, osRaw, identityFile, password in
@@ -2276,6 +2324,7 @@ struct MachineRow: View {
     let onStop: () -> Void
     let onRemove: () -> Void  // remote 머신 전용
     let onConfig: () -> Void  // 머신 설정 sheet 열기
+    let onInfo: () -> Void    // 머신 info sheet 열기
 
     var body: some View {
         HStack(spacing: 12) {
@@ -2356,6 +2405,11 @@ struct MachineRow: View {
                     .help(L("Power on VM"))
                     .controlSize(.small).buttonStyle(.bordered).disabled(isBusy)
             }
+            Button { onInfo() } label: { Image(systemName: "info.circle") }
+                .help(L("Machine info"))
+                .controlSize(.small)
+                .buttonStyle(.bordered)
+                .disabled(isBusy)
             Button { onConfig() } label: { Image(systemName: "gearshape") }
                 .help(L("Open settings"))
                 .controlSize(.small)
@@ -2377,6 +2431,7 @@ struct MachinesSheet: View {
     let activeUUID: String?
     let onConfigRequest: (GuestMachine) -> Void   // nested-sheet 우회: 부모가 띄움
     let onAddRemoteRequest: () -> Void            // 동일 이유
+    let onInfoRequest: (GuestMachine) -> Void     // 동일 이유 — read-only info
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -2455,7 +2510,8 @@ struct MachinesSheet: View {
                         onStart: { Task { await model.start(machine) } },
                         onStop:  { Task { await model.stop(machine) } },
                         onRemove: { Task { await model.removeRemote(machine) } },
-                        onConfig: { onConfigRequest(machine) }
+                        onConfig: { onConfigRequest(machine) },
+                        onInfo: { onInfoRequest(machine) }
                     )
                 }
             }

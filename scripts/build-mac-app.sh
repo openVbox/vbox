@@ -13,15 +13,16 @@
 # Optional env:
 #   OUT       output dir; .app is written to $OUT/vbox.app
 #             (default: <repo-root>/dist/stage)
-#   SRC       SwiftUI source path
-#             (default: <repo-root>/vbox-swift/Sources/VBoxLibrary/VBoxLibrary.swift)
+#   SRC       SwiftUI source path. Accepts either a single .swift file or a
+#             directory; a directory compiles every *.swift inside it.
+#             (default: <repo-root>/vbox-swift/Sources/VBoxLibrary)
 #   ICON      optional path to AppIcon.icns; if missing, app gets no custom icon
 #             (default: <repo-root>/assets/AppIcon.icns)
 
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SRC="${SRC:-$ROOT/vbox-swift/Sources/VBoxLibrary/VBoxLibrary.swift}"
+SRC="${SRC:-$ROOT/vbox-swift/Sources/VBoxLibrary}"
 OUT="${OUT:-$ROOT/dist/stage}"
 ICON="${ICON:-$ROOT/assets/AppIcon.icns}"
 VERSION="${VERSION:?VERSION env is required (e.g. VERSION=0.1.1)}"
@@ -31,7 +32,20 @@ CONTENTS="$APP/Contents"
 MACOS_DIR="$CONTENTS/MacOS"
 RESOURCES="$CONTENTS/Resources"
 
-[[ -f "$SRC" ]] || { echo "[build-mac-app] swift source not found: $SRC" >&2; exit 1; }
+if [[ -f "$SRC" ]]; then
+    SRCS=("$SRC")
+elif [[ -d "$SRC" ]]; then
+    shopt -s nullglob
+    SRCS=("$SRC"/*.swift)
+    shopt -u nullglob
+else
+    echo "[build-mac-app] swift source not found: $SRC" >&2
+    exit 1
+fi
+[[ ${#SRCS[@]} -gt 0 ]] || {
+    echo "[build-mac-app] no .swift sources under $SRC" >&2
+    exit 1
+}
 command -v swiftc >/dev/null || { echo "[build-mac-app] swiftc not in PATH" >&2; exit 1; }
 command -v lipo   >/dev/null || { echo "[build-mac-app] lipo not in PATH"   >&2; exit 1; }
 
@@ -46,12 +60,12 @@ for triple in x86_64-apple-macos13.0 arm64-apple-macos13.0; do
     arch="${triple%%-*}"
     out="$tmp/$arch/VBoxLibrary"
     mkdir -p "$(dirname "$out")"
-    echo "[build-mac-app] swiftc -> $arch"
+    echo "[build-mac-app] swiftc -> $arch (${#SRCS[@]} files)"
     swiftc \
         -target "$triple" \
         -parse-as-library \
         -O \
-        "$SRC" \
+        "${SRCS[@]}" \
         -o "$out"
 done
 lipo -create \
