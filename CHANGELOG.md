@@ -6,6 +6,27 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). The project is
 pre-1.0; released changes are grouped by release tag, and upcoming work lives
 under `[Unreleased]`.
 
+## [v0.1.3] - 2026-05-24
+
+### Added
+
+- `vbox machines info <target>` prints machine metadata; with
+  `--probe` it also runs a live SSH reachability check
+  (`reachable` / `rtt_ms` / `uptime`). Native Swift
+  `MachineInfoSheet` renders the same view with a 5-minute probe
+  cache.
+- Remote SSH hosts and Parallels machines can carry an SSH private
+  key (`--identity-file`) and a password stored in the macOS
+  Keychain (`--password-stdin`, `machines set <target> password`).
+
+### Fixed
+
+- Viewer no longer leaves stale pixels behind transparent shadow
+  pixels when the remote display shrinks.
+- `scripts/build-mac-app.sh` now globs every `*.swift` under the
+  source directory; the previous single-file invocation broke once
+  the Swift target was split.
+
 ## [v0.1.2] - 2026-05-20
 
 ### Changed
