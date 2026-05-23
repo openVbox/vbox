@@ -1,6 +1,6 @@
 cask "vbox" do
   version "0.1.3"
-  sha256 "656b68a7226600d153dd974bfd9542991f20cef39566f33a7ff6131b54459873"
+  sha256 "61bcbc54f483aaae5904ec882d24619c40364bb500c185d0bcfa0b5a0dfec958"
 
   url "https://github.com/openVbox/vbox/releases/download/v#{version}/vbox-universal.tar.gz"
   name "vbox"
