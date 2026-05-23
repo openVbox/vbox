@@ -2,6 +2,8 @@
 
 [English](./README.md) · [한국어](./README.ko.md) · [日本語](./README.ja.md) · [简体中文](./README.zh.md) · **Español**
 
+[![codecov](https://codecov.io/gh/openVbox/vbox/branch/main/graph/badge.svg)](https://codecov.io/gh/openVbox/vbox)
+
 Implementación de protocolo propio + compositor anidado Wayland para ejecutar
 aplicaciones GUI de invitados Linux en multi-ventana rootless desde un host
 macOS. El objetivo es soportar la entrada de teclado en cualquier idioma sin

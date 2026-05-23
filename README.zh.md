@@ -2,6 +2,8 @@
 
 [English](./README.md) · [한국어](./README.ko.md) · [日本語](./README.ja.md) · **简体中文** · [Español](./README.es.md)
 
+[![codecov](https://codecov.io/gh/openVbox/vbox/branch/main/graph/badge.svg)](https://codecov.io/gh/openVbox/vbox)
+
 在 macOS 主机上以 rootless 多窗口方式运行 Linux 客户机 GUI 应用的自定义协议
 + Wayland nested compositor 实现。目标是无需 XPRA 依赖，原生支持任何语言的
 键盘输入。

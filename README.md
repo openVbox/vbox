@@ -2,6 +2,8 @@
 
 **English** · [한국어](./README.ko.md) · [日本語](./README.ja.md) · [简体中文](./README.zh.md) · [Español](./README.es.md)
 
+[![codecov](https://codecov.io/gh/openVbox/vbox/branch/main/graph/badge.svg)](https://codecov.io/gh/openVbox/vbox)
+
 A self-contained protocol + Wayland nested compositor for running Linux
 guest GUI apps as rootless multi-window on a macOS host. The goal is
 full keyboard input support for any language, without any XPRA dependency.

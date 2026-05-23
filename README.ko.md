@@ -2,6 +2,8 @@
 
 [English](./README.md) · **한국어** · [日本語](./README.ja.md) · [简体中文](./README.zh.md) · [Español](./README.es.md)
 
+[![codecov](https://codecov.io/gh/openVbox/vbox/branch/main/graph/badge.svg)](https://codecov.io/gh/openVbox/vbox)
+
 macOS 호스트에서 Linux 게스트 GUI 앱을 rootless 멀티윈도우로 띄우기 위한
 자체 프로토콜 + Wayland nested compositor 구현. XPRA 의존성 없이 어떤 언어의
 키보드 입력이든 직접 처리하는 것이 목표.
