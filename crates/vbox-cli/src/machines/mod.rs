@@ -11,17 +11,26 @@ use crate::context::AppContext;
 use crate::remote;
 use crate::{MachineListArgs, MachineStatus, MachinesArgs, MachinesCommand};
 
+mod kind;
+mod password;
+
+pub(crate) use kind::MachineKind;
+
 #[derive(Debug, Clone, Serialize)]
-struct MachineRecord {
-    uuid: String,
-    name: String,
-    status: String,
-    ip: String,
-    os_raw: String,
-    os_kind: String,
-    ssh_user: String,
-    ssh_host: String,
-    guest_dir: String,
+pub(crate) struct MachineRecord {
+    pub(crate) uuid: String,
+    pub(crate) name: String,
+    pub(crate) status: String,
+    pub(crate) ip: String,
+    pub(crate) os_raw: String,
+    pub(crate) os_kind: String,
+    pub(crate) ssh_user: String,
+    pub(crate) ssh_host: String,
+    pub(crate) guest_dir: String,
+    #[serde(default)]
+    pub(crate) identity_file: String,
+    #[serde(default)]
+    pub(crate) has_password: bool,
 }
 
 pub(crate) fn run(ctx: &AppContext, args: MachinesArgs) -> Result<()> {
@@ -95,7 +104,7 @@ fn info_cmd(ctx: &AppContext, target: &str) -> Result<()> {
 
 fn control_cmd(ctx: &AppContext, target: &str, action: &str) -> Result<()> {
     let row = find_one(ctx, target)?;
-    if row.uuid.starts_with("remote:") {
+    if matches!(MachineKind::from_record(&row), MachineKind::Remote { .. }) {
         bail!(
             "remote machines cannot be controlled with prlctl: {}",
             row.name
@@ -114,7 +123,7 @@ fn control_cmd(ctx: &AppContext, target: &str, action: &str) -> Result<()> {
 
 fn delete_cmd(ctx: &AppContext, target: &str) -> Result<()> {
     let row = find_one(ctx, target)?;
-    if row.uuid.starts_with("remote:") {
+    if matches!(MachineKind::from_record(&row), MachineKind::Remote { .. }) {
         if remote::remove_name(ctx, &row.name)? {
             println!("removed remote: {}", row.name);
             return Ok(());
@@ -139,10 +148,23 @@ fn delete_cmd(ctx: &AppContext, target: &str) -> Result<()> {
 fn config_cmd(ctx: &AppContext, target: &str, as_json: bool) -> Result<()> {
     let row = find_one(ctx, target)?;
     let overrides = load_overrides(ctx)?;
-    let value = overrides
+    let mut value = overrides
         .get(&row.uuid)
         .cloned()
         .unwrap_or_else(|| json!({}));
+    if let Some(map) = value.as_object_mut()
+        && matches!(MachineKind::from_record(&row), MachineKind::Remote { .. })
+    {
+        if !map.contains_key("identity_file") && !row.identity_file.is_empty() {
+            map.insert(
+                "identity_file".to_string(),
+                Value::String(row.identity_file.clone()),
+            );
+        }
+        if !map.contains_key("has_password") && row.has_password {
+            map.insert("has_password".to_string(), Value::Bool(true));
+        }
+    }
     if as_json {
         println!("{}", serde_json::to_string_pretty(&value)?);
     } else if let Some(map) = value.as_object() {
@@ -156,6 +178,9 @@ fn config_cmd(ctx: &AppContext, target: &str, as_json: bool) -> Result<()> {
 fn set_cmd(ctx: &AppContext, target: &str, key: &str, value: &str) -> Result<()> {
     validate_config_key(key)?;
     let row = find_one(ctx, target)?;
+    if key == "password" {
+        return password::set(ctx, &row, value);
+    }
     let mut overrides = load_overrides(ctx)?;
     let entry = overrides
         .entry(row.uuid)
@@ -170,6 +195,9 @@ fn set_cmd(ctx: &AppContext, target: &str, key: &str, value: &str) -> Result<()>
 fn unset_cmd(ctx: &AppContext, target: &str, key: &str) -> Result<()> {
     validate_config_key(key)?;
     let row = find_one(ctx, target)?;
+    if key == "password" {
+        return password::clear(ctx, &row);
+    }
     let mut overrides = load_overrides(ctx)?;
     if let Some(value) = overrides.get_mut(&row.uuid).and_then(Value::as_object_mut) {
         value.remove(key);
@@ -184,7 +212,13 @@ fn find_one(ctx: &AppContext, target: &str) -> Result<MachineRecord> {
         .with_context(|| format!("machine not found: {target}"))
 }
 
-fn records(ctx: &AppContext) -> Result<Vec<MachineRecord>> {
+pub(crate) fn find_by_ssh_target(ctx: &AppContext, ssh: &str) -> Result<Option<MachineRecord>> {
+    Ok(records(ctx)?
+        .into_iter()
+        .find(|row| format!("{}@{}", row.ssh_user, row.ssh_host) == ssh))
+}
+
+pub(crate) fn records(ctx: &AppContext) -> Result<Vec<MachineRecord>> {
     let overrides = load_overrides(ctx)?;
     let mut out = Vec::new();
     let list_json = prlctl_json(["list", "--all", "--full", "--json"])?;
@@ -256,6 +290,15 @@ fn records(ctx: &AppContext) -> Result<Vec<MachineRecord>> {
                 .filter(|value| !value.is_empty())
                 .unwrap_or(&default_dir)
                 .to_string(),
+            identity_file: ov
+                .and_then(|m| m.get("identity_file"))
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            has_password: ov
+                .and_then(|m| m.get("has_password"))
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
         });
     }
 
@@ -274,10 +317,13 @@ fn records(ctx: &AppContext) -> Result<Vec<MachineRecord>> {
             ssh_user: row.ssh_user,
             ssh_host: row.ssh_host,
             guest_dir: row.guest_dir,
+            identity_file: row.identity_file,
+            has_password: row.has_password,
         });
     }
     Ok(out)
 }
+
 
 fn prlctl_json<const N: usize>(args: [&str; N]) -> Result<Value> {
     let Ok(output) = Command::new("prlctl").args(args).output() else {
@@ -404,7 +450,7 @@ fn classify_os(os_raw: &str, name: &str) -> String {
 fn validate_config_key(key: &str) -> Result<()> {
     match key {
         "ssh_user" | "ssh_host" | "ssh_port" | "identity_file" | "guest_dir" | "port"
-        | "socket" | "width" | "height" | "debug" | "tls" | "notes" => Ok(()),
+        | "socket" | "width" | "height" | "debug" | "tls" | "notes" | "password" => Ok(()),
         _ => bail!("unsupported config key: {key}"),
     }
 }

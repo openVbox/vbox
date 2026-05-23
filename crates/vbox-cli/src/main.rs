@@ -7,11 +7,13 @@ use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 mod brand;
 mod context;
 mod distro_icons;
+mod keychain;
 mod library_ui;
 mod machines;
 mod process;
 mod remote;
 mod runtime;
+mod ssh;
 mod symlink;
 
 #[cfg(test)]
@@ -140,6 +142,8 @@ enum VboxCommand {
     Machines(MachinesArgs),
     DistroIcons(DistroIconsArgs),
     Remote(RemoteArgs),
+    #[command(name = "_askpass", hide = true)]
+    Askpass,
 }
 
 #[derive(Args, Debug)]
@@ -412,6 +416,10 @@ struct RemoteAddArgs {
     os: String,
     #[arg(long)]
     os_raw: Option<String>,
+    #[arg(long, value_name = "PATH")]
+    identity_file: Option<PathBuf>,
+    #[arg(long)]
+    password_stdin: bool,
 }
 
 fn main() -> Result<()> {
@@ -489,6 +497,7 @@ fn dispatch(ctx: &AppContext, command: VboxCommand) -> Result<()> {
         VboxCommand::Machines(args) => machines::run(ctx, args),
         VboxCommand::DistroIcons(args) => distro_icons::run(ctx, args),
         VboxCommand::Remote(args) => remote::run(ctx, args),
+        VboxCommand::Askpass => ssh::run_askpass(),
     }
 }
 

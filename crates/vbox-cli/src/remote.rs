@@ -27,6 +27,10 @@ pub(crate) struct RemoteHost {
     os_raw: String,
     #[serde(default)]
     added_at: String,
+    #[serde(default)]
+    identity_file: String,
+    #[serde(default)]
+    has_password: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -38,6 +42,19 @@ pub(crate) struct RemoteRecord {
     pub(crate) guest_dir: String,
     pub(crate) os_raw: String,
     pub(crate) os_kind: String,
+    pub(crate) identity_file: String,
+    pub(crate) has_password: bool,
+}
+
+#[derive(Debug, Default, Clone)]
+pub(crate) struct AddRemoteInput {
+    pub(crate) name: String,
+    pub(crate) ssh: String,
+    pub(crate) guest_dir: Option<String>,
+    pub(crate) os_kind: String,
+    pub(crate) os_raw: String,
+    pub(crate) identity_file: Option<String>,
+    pub(crate) password_stdin: bool,
 }
 
 pub(crate) fn run(ctx: &AppContext, args: RemoteArgs) -> Result<()> {
@@ -45,11 +62,15 @@ pub(crate) fn run(ctx: &AppContext, args: RemoteArgs) -> Result<()> {
         Some(RemoteCommand::List(list)) => list_cmd(ctx, list.tsv, list.json),
         Some(RemoteCommand::Add(add)) => add_cmd(
             ctx,
-            add.name,
-            add.ssh,
-            add.dir.map(|p| p.display().to_string()),
-            add.os,
-            add.os_raw.unwrap_or_default(),
+            AddRemoteInput {
+                name: add.name,
+                ssh: add.ssh,
+                guest_dir: add.dir.map(|p| p.display().to_string()),
+                os_kind: add.os,
+                os_raw: add.os_raw.unwrap_or_default(),
+                identity_file: add.identity_file.map(|p| p.display().to_string()),
+                password_stdin: add.password_stdin,
+            },
         ),
         Some(RemoteCommand::Remove { name }) => remove_cmd(ctx, &name),
         Some(RemoteCommand::File) => {
@@ -76,6 +97,8 @@ pub(crate) fn records(ctx: &AppContext) -> Result<Vec<RemoteRecord>> {
                 guest_dir,
                 os_raw: host.os_raw,
                 os_kind: host.os_kind,
+                identity_file: host.identity_file,
+                has_password: host.has_password,
             })
         })
         .collect())
@@ -84,9 +107,45 @@ pub(crate) fn records(ctx: &AppContext) -> Result<Vec<RemoteRecord>> {
 pub(crate) fn remove_name(ctx: &AppContext, name: &str) -> Result<bool> {
     let mut data = load(ctx)?;
     let before = data.hosts.len();
+    let removed: Vec<RemoteHost> = data
+        .hosts
+        .iter()
+        .filter(|host| host.name == name)
+        .cloned()
+        .collect();
     data.hosts.retain(|host| host.name != name);
     save(ctx, &data)?;
+    for host in &removed {
+        if host.has_password {
+            let _ = crate::keychain::delete_password(&keychain_account(&host.name));
+        }
+    }
     Ok(data.hosts.len() != before)
+}
+
+pub(crate) fn find_by_ssh_target(ctx: &AppContext, ssh: &str) -> Result<Option<RemoteRecord>> {
+    Ok(records(ctx)?
+        .into_iter()
+        .find(|row| format!("{}@{}", row.ssh_user, row.ssh_host) == ssh))
+}
+
+pub(crate) fn keychain_account(name: &str) -> String {
+    format!("remote:{}", sanitize_id(name))
+}
+
+pub(crate) fn set_has_password(ctx: &AppContext, name: &str, present: bool) -> Result<()> {
+    let mut data = load(ctx)?;
+    let mut changed = false;
+    for host in &mut data.hosts {
+        if host.name == name {
+            host.has_password = present;
+            changed = true;
+        }
+    }
+    if !changed {
+        bail!("no such remote: {name}");
+    }
+    save(ctx, &data)
 }
 
 fn list_cmd(ctx: &AppContext, tsv: bool, json: bool) -> Result<()> {
@@ -129,14 +188,17 @@ fn list_cmd(ctx: &AppContext, tsv: bool, json: bool) -> Result<()> {
     Ok(())
 }
 
-fn add_cmd(
-    ctx: &AppContext,
-    name: String,
-    ssh: String,
-    guest_dir: Option<String>,
-    os_kind: String,
-    os_raw: String,
-) -> Result<()> {
+fn add_cmd(ctx: &AppContext, input: AddRemoteInput) -> Result<()> {
+    let AddRemoteInput {
+        name,
+        ssh,
+        guest_dir,
+        os_kind,
+        os_raw,
+        identity_file,
+        password_stdin,
+    } = input;
+
     if name.trim().is_empty() {
         bail!("--name required");
     }
@@ -147,6 +209,23 @@ fn add_cmd(
         Some(guest_dir) => guest_dir,
         None => ctx.guest_dir()?.display().to_string(),
     };
+    let identity_file = identity_file.unwrap_or_default();
+    let password = if password_stdin {
+        Some(read_password_stdin()?)
+    } else {
+        None
+    };
+    let account = keychain_account(&name);
+    let has_password = match password.as_deref() {
+        Some(value) if !value.is_empty() => {
+            crate::keychain::set_password(&account, value)?;
+            true
+        }
+        _ => {
+            let _ = crate::keychain::delete_password(&account);
+            false
+        }
+    };
     let mut data = load(ctx)?;
     data.hosts.retain(|host| host.name != name);
     data.hosts.push(RemoteHost {
@@ -156,10 +235,21 @@ fn add_cmd(
         os_kind,
         os_raw,
         added_at: now_string(),
+        identity_file,
+        has_password,
     });
     save(ctx, &data)?;
     println!("added remote: {name} ({ssh})");
     Ok(())
+}
+
+fn read_password_stdin() -> Result<String> {
+    use std::io::Read;
+    let mut buf = String::new();
+    std::io::stdin()
+        .read_to_string(&mut buf)
+        .context("read password from stdin")?;
+    Ok(buf.trim_end_matches(['\r', '\n']).to_string())
 }
 
 fn remove_cmd(ctx: &AppContext, name: &str) -> Result<()> {
@@ -302,6 +392,8 @@ mod tests {
                         os_kind: "linux".to_string(),
                         os_raw: "Fedora".to_string(),
                         added_at: "unix:1".to_string(),
+                        identity_file: String::new(),
+                        has_password: false,
                     },
                     RemoteHost {
                         name: "broken".to_string(),
@@ -310,6 +402,8 @@ mod tests {
                         os_kind: "linux".to_string(),
                         os_raw: String::new(),
                         added_at: "unix:2".to_string(),
+                        identity_file: String::new(),
+                        has_password: false,
                     },
                 ],
             },
@@ -330,20 +424,24 @@ mod tests {
         let ctx = ctx(&dir);
         add_cmd(
             &ctx,
-            "lab".to_string(),
-            "alice@old".to_string(),
-            Some("/old".to_string()),
-            "linux".to_string(),
-            String::new(),
+            AddRemoteInput {
+                name: "lab".to_string(),
+                ssh: "alice@old".to_string(),
+                guest_dir: Some("/old".to_string()),
+                os_kind: "linux".to_string(),
+                ..AddRemoteInput::default()
+            },
         )
         .unwrap();
         add_cmd(
             &ctx,
-            "lab".to_string(),
-            "bob@new".to_string(),
-            None,
-            "linux".to_string(),
-            "Ubuntu".to_string(),
+            AddRemoteInput {
+                name: "lab".to_string(),
+                ssh: "bob@new".to_string(),
+                os_kind: "linux".to_string(),
+                os_raw: "Ubuntu".to_string(),
+                ..AddRemoteInput::default()
+            },
         )
         .unwrap();
 
@@ -361,11 +459,13 @@ mod tests {
         let ctx = ctx(&dir);
         add_cmd(
             &ctx,
-            "lab".to_string(),
-            "alice@host".to_string(),
-            Some("/home/alice/vbox".to_string()),
-            "linux".to_string(),
-            String::new(),
+            AddRemoteInput {
+                name: "lab".to_string(),
+                ssh: "alice@host".to_string(),
+                guest_dir: Some("/home/alice/vbox".to_string()),
+                os_kind: "linux".to_string(),
+                ..AddRemoteInput::default()
+            },
         )
         .unwrap();
         assert!(remove_name(&ctx, "lab").unwrap());

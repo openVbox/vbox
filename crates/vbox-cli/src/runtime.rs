@@ -12,6 +12,7 @@ use base64::Engine;
 use crate::brand;
 use crate::context::AppContext;
 use crate::process;
+use crate::ssh as ssh_helper;
 use crate::{
     ControldInstallArgs, FilterArgs, InstallAppsArgs, LibraryArgs, LogsArgs, LogsMode,
     PrepareAppArgs, SamplesArg, SecondsArg, SuffixArgs, TextArgs, TrailingArgs, VolumeArgs,
@@ -37,9 +38,10 @@ pub(crate) fn sync(ctx: &AppContext) -> Result<()> {
     eprintln!("[vbox] sync -> {}:{}", guest, guest_dir.display());
     let remote = shell_quote(guest_dir.as_os_str());
     let script = format!(
-        "set -euo pipefail; cd {}; COPYFILE_DISABLE=1 tar --no-xattrs --exclude='./target' --exclude='./.vbox' --exclude='./.icebox' --exclude='./.git' -czf - . | ssh {} \"mkdir -p {remote} && tar -xzf - -C {remote}\"",
+        "set -euo pipefail; cd {}; COPYFILE_DISABLE=1 tar --no-xattrs --exclude='./target' --exclude='./.vbox' --exclude='./.icebox' --exclude='./.git' -czf - . | {ssh} {} \"mkdir -p {remote} && tar -xzf - -C {remote}\"",
         shell_quote(ctx.root.as_os_str()),
         shell_quote(OsStr::new(guest)),
+        ssh = ssh_helper::inline_ssh(ctx),
     );
     process::run(process::piped_shell(&script))
 }
@@ -182,7 +184,7 @@ pub(crate) fn controld_install(ctx: &AppContext, args: ControldInstallArgs) -> R
                 shell_quote(guest_tls_dir.as_os_str())
             ),
         )?;
-        let mut scp = process::command("scp");
+        let mut scp = ssh_helper::scp_command(ctx);
         scp.arg("-q")
             .arg(tls_dir.join("server.pem"))
             .arg(tls_dir.join("server.key.pem"))
@@ -579,12 +581,13 @@ pub(crate) fn logs(ctx: &AppContext, args: LogsArgs) -> Result<()> {
         let guest = ctx.guest()?;
         let guest_dir = ctx.guest_dir()?;
         let script = format!(
-            "tail -F {}/*.log 2>/dev/null & local_pid=$!; ssh -t {} 'cd {} && tail -F .vbox/logs/{}/server.log .vbox/logs/{}/app.log' || true; kill $local_pid 2>/dev/null || true",
+            "tail -F {}/*.log 2>/dev/null & local_pid=$!; {ssh} -t {} 'cd {} && tail -F .vbox/logs/{}/server.log .vbox/logs/{}/app.log' || true; kill $local_pid 2>/dev/null || true",
             shell_quote(log_dir.as_os_str()),
             shell_quote(OsStr::new(guest)),
             shell_quote(guest_dir.as_os_str()),
             shell_quote(OsStr::new(&ctx.instance)),
             shell_quote(OsStr::new(&ctx.instance)),
+            ssh = ssh_helper::inline_ssh(ctx),
         );
         return process::run(process::piped_shell(&script));
     }
@@ -717,16 +720,15 @@ fn start_tunnel(ctx: &AppContext) -> Result<()> {
     let dir = log_dir(ctx);
     fs::create_dir_all(&dir)?;
     let log = fs::File::create(dir.join("tunnel.log"))?;
-    let child = Command::new("ssh")
-        .arg("-N")
+    let mut cmd = ssh_helper::ssh_command(ctx);
+    cmd.arg("-N")
         .arg("-L")
         .arg(format!("127.0.0.1:{}:localhost:{}", ctx.port, ctx.port))
         .arg(guest)
         .stdout(log.try_clone()?)
         .stderr(log)
-        .stdin(Stdio::null())
-        .spawn()
-        .context("start ssh tunnel")?;
+        .stdin(Stdio::null());
+    let child = cmd.spawn().context("start ssh tunnel")?;
     fs::create_dir_all(run_dir(ctx))?;
     fs::write(run_dir(ctx).join("tunnel.pid"), child.id().to_string())?;
     thread::sleep(Duration::from_millis(500));
@@ -743,16 +745,15 @@ fn start_control_tunnel(ctx: &AppContext) -> Result<bool> {
     kill_pid_file(&run_dir(ctx).join("control_tunnel.pid"));
     let port = brand::env_var("VBOX_CONTROL_PORT").unwrap_or_else(|| "5711".to_string());
     let log = fs::File::create(dir.join("control_tunnel.log"))?;
-    let child = Command::new("ssh")
-        .arg("-N")
+    let mut cmd = ssh_helper::ssh_command(ctx);
+    cmd.arg("-N")
         .arg("-L")
         .arg(format!("127.0.0.1:{port}:localhost:{port}"))
         .arg(guest)
         .stdout(log.try_clone()?)
         .stderr(log)
-        .stdin(Stdio::null())
-        .spawn()
-        .context("start control ssh tunnel")?;
+        .stdin(Stdio::null());
+    let child = cmd.spawn().context("start control ssh tunnel")?;
     fs::create_dir_all(run_dir(ctx))?;
     fs::write(
         run_dir(ctx).join("control_tunnel.pid"),
@@ -892,7 +893,7 @@ fn fetch_control_token(ctx: &AppContext) -> Result<()> {
         fs::create_dir_all(parent)?;
     }
     let output = process::output({
-        let mut cmd = process::command("ssh");
+        let mut cmd = ssh_helper::ssh_command(ctx);
         let guest_dir = ctx.guest_dir()?;
         cmd.arg(ctx.guest()?)
             .arg(format!("cat {}/.vbox-controld/token", guest_dir.display()));
@@ -907,14 +908,14 @@ fn tls_bootstrap_default(ctx: &AppContext) -> Result<()> {
 }
 
 fn ssh(ctx: &AppContext, script: &str) -> Result<()> {
-    let mut cmd = process::command("ssh");
+    let mut cmd = ssh_helper::ssh_command(ctx);
     cmd.arg(ctx.guest()?)
         .arg(format!("bash -lc {}", shell_quote(OsStr::new(script))));
     process::run(cmd)
 }
 
 fn ssh_status(ctx: &AppContext, script: &str) -> Result<()> {
-    let mut cmd = process::command("ssh");
+    let mut cmd = ssh_helper::ssh_command(ctx);
     cmd.arg(ctx.guest()?)
         .arg(format!("bash -lc {}", shell_quote(OsStr::new(script))));
     let _ = process::run(cmd);
@@ -1016,7 +1017,7 @@ fn find_app_record(ctx: &AppContext, query: &str) -> Result<AppRecord> {
 }
 
 fn refresh_app_library(ctx: &AppContext) -> Result<()> {
-    let mut cmd = process::command("ssh");
+    let mut cmd = ssh_helper::ssh_command(ctx);
     cmd.arg(ctx.guest()?).arg(format!(
         "python3 -c {}",
         shell_quote(OsStr::new(APP_LIBRARY_PY))
@@ -1047,7 +1048,7 @@ fn fetch_guest_icons(ctx: &AppContext, refresh: bool) -> Result<usize> {
         return Ok(0);
     }
 
-    let mut cmd = process::command("ssh");
+    let mut cmd = ssh_helper::ssh_command(ctx);
     cmd.arg(ctx.guest()?).arg(format!(
         "python3 -c {}",
         shell_quote(OsStr::new(APP_ICON_EXPORT_PY))
