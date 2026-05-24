@@ -1,9 +1,10 @@
 import AppKit
 import SwiftUI
 
-// AddRemoteSheet 와 MachineConfigSheet 가 공유하는 SSH 인증 입력 row.
-// 두 시트 모두 같은 시각 언어 (caption label, roundedBorder field, caption2 hint)를
-// 따른다. 새 시트가 같은 row 가 필요해지면 여기에 추가.
+// SSH credential input rows shared by AddRemoteSheet and MachineConfigSheet.
+// Both sheets follow the same visual language (caption label, roundedBorder
+// field, caption2 hint). Add new shared rows here when another sheet needs
+// the same shape.
 
 @ViewBuilder
 func identityFileRow(text: Binding<String>, hint: String) -> some View {
@@ -29,7 +30,8 @@ func identityFileRow(text: Binding<String>, hint: String) -> some View {
     }
 }
 
-// AddRemoteSheet 용: 처음 등록 — placeholder 만 보이고 키체인 상태 표시는 없음.
+// For AddRemoteSheet: first-time registration — only placeholder is shown,
+// no keychain-status badge.
 @ViewBuilder
 func passwordRow(text: Binding<String>, placeholder: String, hint: String) -> some View {
     VStack(alignment: .leading, spacing: 4) {
@@ -40,7 +42,8 @@ func passwordRow(text: Binding<String>, placeholder: String, hint: String) -> so
     }
 }
 
-// MachineConfigSheet 용: 변경 — 기존 키체인 저장 여부 배지 + Clear 토글.
+// For MachineConfigSheet: editing — shows a badge for an existing
+// keychain entry plus a Clear toggle.
 @ViewBuilder
 func passwordChangeRow(text: Binding<String>, hasExisting: Bool,
                        clearRequested: Binding<Bool>, hint: String) -> some View {
