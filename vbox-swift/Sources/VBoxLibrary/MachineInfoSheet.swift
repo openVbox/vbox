@@ -1,9 +1,10 @@
 import AppKit
 import SwiftUI
 
-// CLI `vbox machines info <target> --json` 출력의 1:1 Swift 미러.
-// 새 필드가 CLI 쪽 MachineRecord 에 붙으면 여기에도 추가해야 함.
-// overrides 의 값은 set_cmd 가 `Value::String` 으로만 저장하므로 모두 String.
+// 1:1 Swift mirror of the CLI's `vbox machines info <target> --json` output.
+// When a new field is added to the CLI's MachineRecord, mirror it here too.
+// Every overrides value is a String because set_cmd stores it as
+// `Value::String` only.
 struct MachineDetails: Decodable {
     let record: Record
     let overrides: [String: String]?
@@ -71,9 +72,10 @@ extension MachinesModel {
                                           from: Data(result.output.utf8))
     }
 
-    // probe 는 ssh handshake + ConnectTimeout=3 까지 갈 수 있어 비용↑.
-    // 같은 머신을 시트로 다시 열어도 5 분 안에는 캐시 결과를 즉시 보여줌.
-    // `force` 로 캐시 무시하고 새로 측정 (Re-probe 버튼).
+    // A probe can include an SSH handshake plus ConnectTimeout=3, so it is
+    // expensive. Reopening the sheet for the same machine within 5 minutes
+    // returns the cached result immediately.
+    // Pass `force` to bypass the cache and re-measure (Re-probe button).
     func probeDetails(for machine: GuestMachine,
                       force: Bool = false) async -> MachineDetails? {
         let key = machine.uuid
@@ -92,11 +94,11 @@ extension MachinesModel {
     }
 }
 
-// in-memory probe cache. actor 라 thread-safe.
+// In-memory probe cache. Implemented as an actor for thread safety.
 fileprivate actor ProbeCache {
     static let shared = ProbeCache()
     private var entries: [String: (Date, MachineDetails)] = [:]
-    private let ttl: TimeInterval = 300  // 5 분
+    private let ttl: TimeInterval = 300  // 5 minutes
 
     func get(_ key: String) -> MachineDetails? {
         guard let entry = entries[key],
@@ -109,8 +111,9 @@ fileprivate actor ProbeCache {
     }
 }
 
-// 머신 read-only 상세 정보 시트. 편집 컨트롤 없음; MachineConfigSheet 의
-// "labeled value" 스타일을 가볍게 따른다 (caption label + monospaced value).
+// Read-only machine details sheet. No editing controls; loosely follows the
+// "labeled value" style from MachineConfigSheet (caption label + monospaced
+// value).
 struct MachineInfoSheet: View {
     let machine: GuestMachine
     @ObservedObject var model: MachinesModel
@@ -233,8 +236,9 @@ struct MachineInfoSheet: View {
 
     @ViewBuilder
     private func probeContent(initial: MachineDetails.ProbeReport?) -> some View {
-        // probeResult 는 사용자 클릭 후 채워진다. initial 은 첫 로드 시 --probe
-        // 없이 호출하므로 항상 nil 이지만, 호환 위해 fallback 으로 받음.
+        // probeResult is populated after the user explicitly probes. `initial`
+        // is always nil because the first load runs without --probe, but it is
+        // accepted here as a fallback for forward compatibility.
         if let p = probeResult ?? initial {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 6) {
