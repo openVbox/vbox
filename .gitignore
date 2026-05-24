@@ -6,4 +6,5 @@
 /vbox-swift/.build/
 /.codex/
 /.claude/
+/.vscode/
 .DS_Store
