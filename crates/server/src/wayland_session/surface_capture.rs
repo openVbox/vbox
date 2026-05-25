@@ -365,6 +365,8 @@ mod tests {
     }
 }
 
+// Smithay surface-tree traversal — covered by integration paths, not unit tests.
+#[allow(clippy::items_after_test_module)]
 pub(crate) fn send_frame_callbacks(surface: &wl_surface::WlSurface, time: u32) {
     with_surface_tree_downward(
         surface,

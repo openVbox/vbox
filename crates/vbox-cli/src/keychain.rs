@@ -1,8 +1,15 @@
-use std::io::Write;
-use std::process::{Command, Stdio};
+#[cfg(target_os = "macos")]
+use {
+    anyhow::Context,
+    std::{
+        io::Write,
+        process::{Command, Stdio},
+    },
+};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 
+#[cfg(target_os = "macos")]
 const SERVICE: &str = "vbox-remote";
 
 #[cfg(target_os = "macos")]

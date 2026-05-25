@@ -257,7 +257,7 @@ async fn handle_connection(incoming: quinn::Incoming, token: String) -> Result<(
                             datagram_chunks = datagram_chunks.saturating_add(stats.chunks as u64);
                             datagram_bytes = datagram_bytes.saturating_add(stats.bytes as u64);
                             if crate::debug_enabled()
-                                && (datagram_frames <= 5 || datagram_frames % 60 == 0)
+                                && (datagram_frames <= 5 || datagram_frames.is_multiple_of(60))
                             {
                                 eprintln!(
                                     "debug: quic datagram frame seq={frame_seq} id={} chunks={} bytes={} total_frames={} total_chunks={} total_bytes={}",
@@ -419,7 +419,7 @@ async fn write_channel_frame(
     channel_id: u64,
     msg: &vbox_proto::Message,
 ) -> Result<()> {
-    if !streams.contains_key(&channel_id) {
+    if let std::collections::hash_map::Entry::Vacant(e) = streams.entry(channel_id) {
         let mut stream = connection.open_uni().await?;
         write_prelude(&mut stream).await?;
         write_frame(
@@ -433,7 +433,7 @@ async fn write_channel_frame(
         if crate::debug_enabled() {
             eprintln!("debug: quic channel open id={channel_id}");
         }
-        streams.insert(channel_id, stream);
+        e.insert(stream);
     }
 
     let stream = streams

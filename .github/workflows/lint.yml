@@ -28,13 +28,25 @@ jobs:
           cache-key: fmt
       - run: cargo fmt --all -- --check
 
-  clippy:
-    name: clippy
+  clippy-linux:
+    name: clippy (linux)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-rust
         with:
           components: clippy
-          cache-key: clippy
+          cache-key: clippy-linux
+      # vbox-client is macOS-host-only; exclude it on Linux to avoid dead_code lints.
+      - run: cargo clippy --workspace --exclude vbox-client --all-targets --locked -- -D warnings
+
+  clippy-macos:
+    name: clippy (macos / arm64)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-rust
+        with:
+          components: clippy
+          cache-key: clippy-macos
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
