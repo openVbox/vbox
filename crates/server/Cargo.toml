@@ -25,3 +25,6 @@ rustls-pemfile.workspace = true
 [target.'cfg(target_os = "linux")'.dependencies]
 smithay = { version = "0.7.0", default-features = false, features = ["wayland_frontend"] }
 libc = "0.2"
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+tokio = { workspace = true, features = ["macros"] }

@@ -560,3 +560,193 @@ async fn read_frame(recv: &mut quinn::RecvStream) -> Result<vbox_proto::Message>
         .context("reading QUIC frame payload")?;
     vbox_proto::decode_frame_payload(kind, &payload)
 }
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::*;
+    use std::net::{Ipv4Addr, SocketAddr};
+    use std::sync::Arc;
+
+    use quinn::crypto::rustls::{QuicClientConfig, QuicServerConfig};
+    use quinn::{ClientConfig, Endpoint, ServerConfig};
+    use rustls::pki_types::{
+        CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, ServerName, UnixTime,
+    };
+
+    // Self-signed cert + key for "vbox-server" (SAN + CN). Mirrors the
+    // production cert path at the top of this module so the test exercises
+    // the same SNI the real server uses.
+    fn self_signed() -> (Vec<CertificateDer<'static>>, PrivateKeyDer<'static>) {
+        let key = rcgen::KeyPair::generate().expect("rcgen key");
+        let mut params =
+            rcgen::CertificateParams::new(vec!["vbox-server".to_owned()]).expect("cert params");
+        params
+            .distinguished_name
+            .push(rcgen::DnType::CommonName, "vbox-server");
+        let cert = params.self_signed(&key).expect("self-sign");
+        let cert_der = CertificateDer::from(cert.der().to_vec());
+        let key_der: PrivateKeyDer<'static> =
+            PrivatePkcs8KeyDer::from(key.serialize_der()).into();
+        (vec![cert_der], key_der)
+    }
+
+    // Test-only client verifier that accepts any cert — fine for loopback.
+    #[derive(Debug)]
+    struct SkipVerify(Arc<rustls::crypto::CryptoProvider>);
+
+    impl rustls::client::danger::ServerCertVerifier for SkipVerify {
+        fn verify_server_cert(
+            &self,
+            _: &CertificateDer<'_>,
+            _: &[CertificateDer<'_>],
+            _: &ServerName<'_>,
+            _: &[u8],
+            _: UnixTime,
+        ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+            Ok(rustls::client::danger::ServerCertVerified::assertion())
+        }
+        fn verify_tls12_signature(
+            &self,
+            message: &[u8],
+            cert: &CertificateDer<'_>,
+            dss: &rustls::DigitallySignedStruct,
+        ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+            rustls::crypto::verify_tls12_signature(
+                message,
+                cert,
+                dss,
+                &self.0.signature_verification_algorithms,
+            )
+        }
+        fn verify_tls13_signature(
+            &self,
+            message: &[u8],
+            cert: &CertificateDer<'_>,
+            dss: &rustls::DigitallySignedStruct,
+        ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+            rustls::crypto::verify_tls13_signature(
+                message,
+                cert,
+                dss,
+                &self.0.signature_verification_algorithms,
+            )
+        }
+        fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+            self.0
+                .signature_verification_algorithms
+                .supported_schemes()
+        }
+    }
+
+    // Spawn a loopback endpoint pair on 127.0.0.1:0 and complete the QUIC
+    // handshake. ALPN and SNI both must match the production identifiers
+    // (`vbox-quic/1` and `vbox-server`); a mismatch causes a silent timeout.
+    async fn spawn_pair() -> (Endpoint, Endpoint, quinn::Connection, quinn::Connection) {
+        let (certs, key) = self_signed();
+        let mut server_crypto = rustls::ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(certs, key)
+            .expect("server crypto");
+        server_crypto.alpn_protocols = vec![b"vbox-quic/1".to_vec()];
+        let server_cfg = ServerConfig::with_crypto(Arc::new(
+            QuicServerConfig::try_from(server_crypto).expect("quic server"),
+        ));
+        let server = Endpoint::server(server_cfg, SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))
+            .expect("server endpoint");
+        let server_addr = server.local_addr().expect("server addr");
+
+        let mut client_crypto = rustls::ClientConfig::builder()
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(SkipVerify(Arc::new(
+                rustls::crypto::aws_lc_rs::default_provider(),
+            ))))
+            .with_no_client_auth();
+        client_crypto.alpn_protocols = vec![b"vbox-quic/1".to_vec()];
+        let client_cfg = ClientConfig::new(Arc::new(
+            QuicClientConfig::try_from(client_crypto).expect("quic client"),
+        ));
+        let mut client = Endpoint::client(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))
+            .expect("client endpoint");
+        client.set_default_client_config(client_cfg);
+
+        let accept = async {
+            server
+                .accept()
+                .await
+                .expect("accept incoming")
+                .await
+                .expect("server handshake")
+        };
+        let connect = async {
+            client
+                .connect(server_addr, "vbox-server")
+                .expect("dial")
+                .await
+                .expect("client handshake")
+        };
+        let (server_conn, client_conn) = tokio::join!(accept, connect);
+        (server, client, server_conn, client_conn)
+    }
+
+    // Exercises the Vacant arm of `write_channel_frame`: the first call must
+    // open a new uni stream, write the prelude + a DataPlaneChannel opener,
+    // and insert the SendStream into the map. The second call must hit the
+    // Occupied path and reuse the same stream (no second open / no second
+    // channel frame on the wire).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn write_channel_frame_opens_uni_stream_on_vacant_entry() {
+        let (server_ep, client_ep, server_conn, client_conn) = spawn_pair().await;
+
+        let mut streams = HashMap::<u64, quinn::SendStream>::new();
+        let payload =
+            vbox_proto::Message::WindowEvent(vbox_proto::WindowEvent::Destroyed { id: 7 });
+
+        // Reader side: accept the uni stream the producer opens, read
+        // prelude + 3 frames (channel-open, then payload twice).
+        let reader = tokio::spawn(async move {
+            let mut recv = client_conn.accept_uni().await.expect("accept uni");
+            read_prelude(&mut recv).await.expect("prelude");
+            let opener = read_frame(&mut recv).await.expect("channel opener");
+            let first_payload = read_frame(&mut recv).await.expect("payload 1");
+            let second_payload = read_frame(&mut recv).await.expect("payload 2");
+            (opener, first_payload, second_payload)
+        });
+
+        // First call drives the Vacant arm.
+        write_channel_frame(&server_conn, &mut streams, 42, &payload)
+            .await
+            .expect("first write_channel_frame");
+        assert!(
+            streams.contains_key(&42),
+            "Vacant arm must insert the new stream into the map"
+        );
+
+        // Second call drives the Occupied arm — must reuse the same stream
+        // (no second open_uni, no second prelude on the wire).
+        write_channel_frame(&server_conn, &mut streams, 42, &payload)
+            .await
+            .expect("second write_channel_frame");
+        assert_eq!(streams.len(), 1, "Occupied arm must not allocate a new entry");
+
+        let (opener, first_payload, second_payload) = reader.await.expect("reader join");
+        match opener {
+            vbox_proto::Message::DataPlaneChannel(ch) => {
+                assert_eq!(ch.channel_id, 42);
+                assert_eq!(
+                    ch.purpose,
+                    vbox_proto::DataPlaneChannelPurpose::WindowReliable
+                );
+            }
+            other => panic!("expected DataPlaneChannel opener, got {:?}", other.kind()),
+        }
+        assert_eq!(first_payload.kind(), payload.kind());
+        assert_eq!(second_payload.kind(), payload.kind());
+
+        // Cleanup so quinn's background task doesn't leak into the next test.
+        drop(streams); // close the SendStream we held
+        server_ep.close(0u32.into(), b"test done");
+        client_ep.close(0u32.into(), b"test done");
+        server_ep.wait_idle().await;
+        client_ep.wait_idle().await;
+    }
+}
