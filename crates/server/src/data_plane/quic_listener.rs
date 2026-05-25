@@ -257,7 +257,7 @@ async fn handle_connection(incoming: quinn::Incoming, token: String) -> Result<(
                             datagram_chunks = datagram_chunks.saturating_add(stats.chunks as u64);
                             datagram_bytes = datagram_bytes.saturating_add(stats.bytes as u64);
                             if crate::debug_enabled()
-                                && (datagram_frames <= 5 || datagram_frames % 60 == 0)
+                                && (datagram_frames <= 5 || datagram_frames.is_multiple_of(60))
                             {
                                 eprintln!(
                                     "debug: quic datagram frame seq={frame_seq} id={} chunks={} bytes={} total_frames={} total_chunks={} total_bytes={}",
