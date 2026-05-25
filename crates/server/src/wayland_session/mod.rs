@@ -2472,6 +2472,21 @@ mod tests {
         assert_eq!(geometry.size.w, 100);
         assert_eq!(geometry.size.h, 80);
     }
+
+    #[test]
+    fn should_log_count_keeps_first_five_and_every_sixtieth() {
+        // First 5 always log (initial burst), then sparse: every 60th counter
+        // value also passes. Anything in-between is suppressed.
+        for n in 0..=5 {
+            assert!(should_log_count(n), "n={n} should log (initial burst)");
+        }
+        assert!(!should_log_count(6));
+        assert!(!should_log_count(59));
+        assert!(should_log_count(60));
+        assert!(!should_log_count(61));
+        assert!(should_log_count(120));
+        assert!(!should_log_count(121));
+    }
 }
 
 delegate_xdg_shell!(App);
