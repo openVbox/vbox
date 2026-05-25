@@ -272,6 +272,26 @@ pub(crate) fn convert_shm_pixel(format: wl_shm::Format, px: &[u8]) -> Option<[u8
     }
 }
 
+pub(crate) fn send_frame_callbacks(surface: &wl_surface::WlSurface, time: u32) {
+    with_surface_tree_downward(
+        surface,
+        (),
+        |_, _, &()| TraversalAction::DoChildren(()),
+        |_surf, states, &()| {
+            for callback in states
+                .cached_state
+                .get::<SurfaceAttributes>()
+                .current()
+                .frame_callbacks
+                .drain(..)
+            {
+                callback.done(time);
+            }
+        },
+        |_, _, &()| true,
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -363,24 +383,4 @@ mod tests {
             None
         );
     }
-}
-
-pub(crate) fn send_frame_callbacks(surface: &wl_surface::WlSurface, time: u32) {
-    with_surface_tree_downward(
-        surface,
-        (),
-        |_, _, &()| TraversalAction::DoChildren(()),
-        |_surf, states, &()| {
-            for callback in states
-                .cached_state
-                .get::<SurfaceAttributes>()
-                .current()
-                .frame_callbacks
-                .drain(..)
-            {
-                callback.done(time);
-            }
-        },
-        |_, _, &()| true,
-    );
 }

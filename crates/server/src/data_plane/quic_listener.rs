@@ -419,7 +419,7 @@ async fn write_channel_frame(
     channel_id: u64,
     msg: &vbox_proto::Message,
 ) -> Result<()> {
-    if !streams.contains_key(&channel_id) {
+    if let std::collections::hash_map::Entry::Vacant(e) = streams.entry(channel_id) {
         let mut stream = connection.open_uni().await?;
         write_prelude(&mut stream).await?;
         write_frame(
@@ -433,7 +433,7 @@ async fn write_channel_frame(
         if crate::debug_enabled() {
             eprintln!("debug: quic channel open id={channel_id}");
         }
-        streams.insert(channel_id, stream);
+        e.insert(stream);
     }
 
     let stream = streams

@@ -1460,14 +1460,14 @@ impl CompositorHandler for App {
         self.current_buffers.remove(&key);
         self.child_surfaces.remove(&key);
         self.child_surface_last_rect.remove(&key);
-        if let Some(window_id) = self.child_surface_window.remove(&key) {
-            if self.debug {
-                eprintln!(
-                    "debug: child surface destroyed id={} window={} (no immediate repaint)",
-                    key.protocol_id(),
-                    window_id
-                );
-            }
+        if let Some(window_id) = self.child_surface_window.remove(&key)
+            && self.debug
+        {
+            eprintln!(
+                "debug: child surface destroyed id={} window={} (no immediate repaint)",
+                key.protocol_id(),
+                window_id
+            );
         }
         if let Some(window_id) = popup_parent_window_id {
             if self.debug {
@@ -1697,13 +1697,13 @@ impl XdgShellHandler for App {
 
     fn new_popup(&mut self, surface: PopupSurface, positioner: PositionerState) {
         if self.route_popup(&surface, positioner) {
-            if self.debug {
-                if let Some(route) = self.popup_routes.get(&surface.wl_surface().id()) {
-                    eprintln!(
-                        "debug: popup created id={} offset={}x{} size={}x{}",
-                        route.window_id, route.x, route.y, route.width, route.height
-                    );
-                }
+            if self.debug
+                && let Some(route) = self.popup_routes.get(&surface.wl_surface().id())
+            {
+                eprintln!(
+                    "debug: popup created id={} offset={}x{} size={}x{}",
+                    route.window_id, route.x, route.y, route.width, route.height
+                );
             }
         } else if self.debug {
             eprintln!("debug: popup created without parent window route");
@@ -2228,7 +2228,7 @@ fn gtk_wm_requests_enabled() -> bool {
 }
 
 fn should_log_count(count: u64) -> bool {
-    count <= 5 || count % 60 == 0
+    count <= 5 || count.is_multiple_of(60)
 }
 
 fn ascii_keycode(ch: char) -> Option<(u32, bool)> {
